@@ -156,6 +156,20 @@ func (a *App) StartCapture(title, notes string) (capture.Record, error) {
 func (a *App) StopCapture() (capture.Record, error)              { return a.manager.StopCapture() }
 func (a *App) SaveNotes(path, notes string) error                { return a.manager.SaveNotes(path, notes) }
 func (a *App) ListRecords(root string) ([]capture.Record, error) { return a.manager.ListRecords(root) }
+func (a *App) ReadRecordLogs(path string) (capture.RecordLogs, error) {
+	return a.manager.ReadRecordLogs(path)
+}
+func (a *App) DeleteRecords(paths []string) (string, error) {
+	answer, err := wruntime.MessageDialog(a.ctx, wruntime.MessageDialogOptions{
+		Type: wruntime.QuestionDialog, Title: "删除抓取记录",
+		Message: fmt.Sprintf("将选中的 %d 条记录移入保存目录下的 .twinlog-trash 回收目录？\n记录日志和备注会一起移入，完整日志 full 保留。可从回收目录手动找回。", len(paths)),
+		Buttons: []string{"Yes", "No"}, DefaultButton: "No", CancelButton: "No",
+	})
+	if err != nil || answer != "Yes" {
+		return "", err
+	}
+	return a.manager.TrashRecords(a.GetConfig().OutputDir, paths)
+}
 func (a *App) ExportRecords(paths []string, includeFull bool) (string, error) {
 	path, e := wruntime.SaveFileDialog(a.ctx, wruntime.SaveDialogOptions{Title: "导出抓取记录", DefaultFilename: "TwinLog_" + time.Now().Format("20060102_150405") + ".zip", Filters: []wruntime.FileFilter{{DisplayName: "ZIP 压缩包", Pattern: "*.zip"}}})
 	if e != nil || path == "" {

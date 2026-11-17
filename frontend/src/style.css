@@ -170,6 +170,60 @@ label {
   overflow: auto;
   padding: 0 10px;
 }
+.selection-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  margin: 0 16px 9px;
+  gap: 8px;
+}
+.selection-toolbar label {
+  flex-direction: row;
+  align-items: center;
+  font-size: 11px;
+  gap: 7px;
+}
+.delete-records {
+  color: #b75d50;
+  font-size: 11px;
+  height: 28px;
+  padding: 0 5px;
+}
+.delete-records:hover:not(:disabled) {
+  background: #fff1ef;
+}
+.history-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 12px;
+  margin-bottom: 9px;
+  border: 1px solid #d7eae6;
+  background: #eff8f6;
+  border-radius: 7px;
+  color: #28786d;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.history-banner > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.history-banner small {
+  display: block;
+  font-size: 10px;
+  margin-top: 3px;
+  color: #718d86;
+}
+.history-banner button {
+  font-size: 11px;
+  flex-shrink: 0;
+  border-color: #bed7d3;
+  background: white;
+  padding: 5px 8px;
+}
 .history-empty {
   padding: 60px 7px;
   text-align: center;

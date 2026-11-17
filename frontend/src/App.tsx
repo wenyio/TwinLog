@@ -1,5 +1,6 @@
 import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import LogSplit from "./LogSplit";
+import { version } from "../package.json";
 import {
   Activity,
   Usb,
@@ -30,6 +31,7 @@ import {
   Config,
   State,
   RecordItem,
+  RecordLogs,
   Port,
   Device,
 } from "./bridge";
@@ -70,11 +72,13 @@ function LogPane({
   text,
   clear,
   visible,
+  historical = false,
 }: {
   source: string;
   text: string;
   clear: () => void;
   visible: boolean;
+  historical?: boolean;
 }) {
   const [paused, setPaused] = useState(false);
   const [snapshot, setSnapshot] = useState("");
@@ -99,7 +103,7 @@ function LogPane({
         <span className={"source-dot " + source} />
         <strong>{source === "mcu" ? "MCU 串口" : "Android Logcat"}</strong>
         <div className="grow" />
-        <button
+        {!historical && <button
           className={"icon " + (paused ? "toggled" : "")}
           title={
             paused ? "继续自动滚动，显示最新日志" : "暂停自动滚动，固定当前预览"
@@ -109,7 +113,7 @@ function LogPane({
           onClick={togglePaused}
         >
           {paused ? <Play size={14} /> : <Pause size={14} />}
-        </button>
+        </button>}
         <button
           className="icon"
           title="清空预览，不影响保存"
@@ -121,7 +125,7 @@ function LogPane({
       <pre ref={pre}>
         {displayedText || (
           <span className="log-empty">
-            {source === "mcu" ? "等待串口数据…" : "等待 Android 日志…"}
+            {historical ? "该记录暂无日志内容" : source === "mcu" ? "等待串口数据…" : "等待 Android 日志…"}
           </span>
         )}
       </pre>
@@ -148,6 +152,7 @@ export default function App() {
   const [records, setRecords] = useState<RecordItem[]>([]),
     [selected, setSelected] = useState<Set<string>>(new Set()),
     [view, setView] = useState<RecordItem | null>(null),
+    [recordLogs, setRecordLogs] = useState<RecordLogs | null>(null),
     [title, setTitle] = useState(""),
     [notes, setNotes] = useState(""),
     [advanced, setAdvanced] = useState(false);
@@ -162,6 +167,7 @@ export default function App() {
     draft = useRef({ title: "", notes: "" }),
     titleInput = useRef<HTMLInputElement>(null),
     focusTitle = useRef(false),
+    selectAll = useRef<HTMLInputElement>(null),
     saving = useRef<Promise<void>>(Promise.resolve()),
     timer = useRef<ReturnType<typeof setTimeout> | null>(null),
     viewRef = useRef<RecordItem | null>(null),
@@ -181,7 +187,13 @@ export default function App() {
     }
   }, [busy, view, layout.right, operationsTab]);
   const refreshRecords = async (root = config.outputDir) => {
-    if (desktop() && root) setRecords((await api.ListRecords(root)) || []);
+    if (desktop() && root) {
+      const items = (await api.ListRecords(root)) || [];
+      setRecords(items);
+      setSelected((s) => new Set([...s].filter((path) =>
+        items.some((r) => r.path === path && r.path !== stateRef.current.activeRecord?.path),
+      )));
+    }
   };
   const run = async (label: string, fn: () => Promise<void>) => {
     setBusy(label);
@@ -297,6 +309,8 @@ export default function App() {
   const patch = (v: Partial<Config>) => setConfig((c) => ({ ...c, ...v }));
   const changeView = async (r: RecordItem) => {
     await flush();
+    const logs = await api.ReadRecordLogs(r.path);
+    setRecordLogs(logs);
     setOperationsTab("capture");
     setLayout((v) => ({ ...v, right: true }));
     viewRef.current = r;
@@ -310,6 +324,7 @@ export default function App() {
       await flush();
       viewRef.current = null;
       setView(null);
+      setRecordLogs(null);
       setTitle(draft.current.title);
       setNotes(draft.current.notes);
       setSaved(true);
@@ -363,6 +378,7 @@ export default function App() {
       draft.current = { title: "", notes: "" };
       viewRef.current = r;
       setView(r);
+      setRecordLogs(null);
       setTitle(r.title);
       setState(await api.GetState());
       await refreshRecords();
@@ -374,9 +390,34 @@ export default function App() {
       const r = await api.StopCapture();
       viewRef.current = r;
       setView(r);
+      setRecordLogs(null);
       setNotes(r.notes);
       setState(await api.GetState());
       await refreshRecords();
+      setRecordLogs(await api.ReadRecordLogs(r.path));
+    });
+  const deleteRecords = () =>
+    run("删除记录", async () => {
+      await flush();
+      const paths = [...selected];
+      let trash = "";
+      try {
+        trash = await api.DeleteRecords(paths);
+      } finally {
+        // Refresh even after a partially failed filesystem operation.
+        await refreshRecords();
+      }
+      if (!trash) return;
+      if (viewRef.current && selected.has(viewRef.current.path)) {
+        viewRef.current = null;
+        setView(null);
+        setRecordLogs(null);
+        setTitle(draft.current.title);
+        setNotes(draft.current.notes);
+        setSaved(true);
+      }
+      setSelected(new Set());
+      setNotice("已将 " + paths.length + " 条记录移入回收目录：" + trash);
     });
   const exportRecords = () =>
     run("正在导出", async () => {
@@ -387,6 +428,12 @@ export default function App() {
   const locked = !!busy,
     live = state.capturing && view?.path === state.activeRecord?.path,
     history = !!view && !live;
+  const selectable = records.filter((r) => r.path !== state.activeRecord?.path);
+  const selectedCount = selectable.filter((r) => selected.has(r.path)).length;
+  const allSelected = selectable.length > 0 && selectedCount === selectable.length;
+  useEffect(() => {
+    if (selectAll.current) selectAll.current.indeterminate = selectedCount > 0 && !allSelected;
+  }, [selectedCount, allSelected]);
   return (
     <div className="app-shell">
       <aside className="sidebar" hidden={!layout.left}>
@@ -397,7 +444,7 @@ export default function App() {
           <div>
             <b>TwinLog</b>
           </div>
-          <span className="version">v0.1.2</span>
+          <span className="version">v{version}</span>
         </div>
         <div className="sidebar-top">
           <div>
@@ -423,6 +470,28 @@ export default function App() {
           <Plus size={17} />
           新建抓取
         </button>
+        <div className="selection-toolbar">
+          <label>
+            <input
+              ref={selectAll}
+              type="checkbox"
+              aria-label="全选记录"
+              checked={allSelected}
+              disabled={!selectable.length || locked}
+              onChange={() => setSelected(allSelected ? new Set() : new Set(selectable.map((r) => r.path)))}
+            />
+            全选{selectedCount ? " · " + selectedCount : ""}
+          </label>
+          <button
+            className="delete-records"
+            aria-label="删除所选"
+            title={state.capturing ? "请先停止当前抓取" : "移入回收目录，保留完整日志"}
+            disabled={!selectedCount || locked || state.capturing}
+            onClick={deleteRecords}
+          >
+            <Trash2 size={14} />删除
+          </button>
+        </div>
         <div className="history-list">
           {!records.length ? (
             <div className="history-empty">
@@ -441,7 +510,7 @@ export default function App() {
                   type="checkbox"
                   aria-label={"选择 " + r.title}
                   checked={selected.has(r.path)}
-                  disabled={r.path === state.activeRecord?.path}
+                  disabled={locked || r.path === state.activeRecord?.path}
                   onChange={(e) =>
                     setSelected((s) => {
                       const n = new Set(s);
@@ -452,6 +521,8 @@ export default function App() {
                   }
                 />
                 <button
+                  title="查看该记录的日志和备注"
+                  aria-current={view?.path === r.path ? "page" : undefined}
                   onClick={() => run("打开记录", async () => changeView(r))}
                   disabled={state.capturing || locked}
                 >
@@ -559,9 +630,9 @@ export default function App() {
             className="icon"
             title="打开日志目录"
             aria-label="打开日志目录"
-            disabled={!state.sessionDir || locked}
+            disabled={!(view?.path || state.sessionDir) || locked}
             onClick={() =>
-              run("打开目录", async () => api.OpenFolder(state.sessionDir))
+              run("打开目录", async () => api.OpenFolder(view?.path || state.sessionDir))
             }
           >
             <FolderOpen size={17} />
@@ -603,17 +674,32 @@ export default function App() {
             </span>
           </div>
         )}
+        {history && (
+          <div className="history-banner">
+            <span title={view.path}>
+              历史日志 · <strong>{view.title}</strong>
+              <small>{recordLogs ? (recordLogs.mcu.truncated || recordLogs.android.truncated
+                ? "仅预览末尾最多 2000 行 / 256 KB，全文请打开记录目录"
+                : "显示该条抓取已保存的日志") : "日志未加载，可重新点击记录重试"}</small>
+            </span>
+            <button disabled={locked} onClick={prepareCapture}>返回实时</button>
+          </div>
+        )}
         <LogSplit mode={layout.mode}>
           <LogPane
+            key={history ? view.path + "mcu" : "live-mcu"}
             source="mcu"
-            text={mcu}
-            clear={() => setMcu("")}
+            historical={history}
+            text={history ? recordLogs?.mcu.text || "" : mcu}
+            clear={() => history ? setRecordLogs((logs) => logs && ({ ...logs, mcu: { ...logs.mcu, text: "" } })) : setMcu("")}
             visible={layout.mode !== "android"}
           />
           <LogPane
+            key={history ? view.path + "android" : "live-android"}
             source="android"
-            text={android}
-            clear={() => setAndroid("")}
+            historical={history}
+            text={history ? recordLogs?.android.text || "" : android}
+            clear={() => history ? setRecordLogs((logs) => logs && ({ ...logs, android: { ...logs.android, text: "" } })) : setAndroid("")}
             visible={layout.mode !== "mcu"}
           />
         </LogSplit>
@@ -622,14 +708,14 @@ export default function App() {
             <i className={state.connected ? "online-dot" : "offline-dot"} />
             {busy || (state.connected ? "已连接 · 全量记录中" : "未连接")}
           </span>
-          <span className="live-label">实时日志</span>
+          <span className="live-label">{history ? "历史日志" : "实时日志"}</span>
           <span className="status-notice" title={notice}>
             {notice}
           </span>
           <div className="grow" />
           <span className="mono">
-            MCU {size(state.mcuBytes)}
-            <span className="divider">/</span>Android {size(state.androidBytes)}
+            MCU {size(history ? recordLogs?.mcu.bytes || 0 : state.mcuBytes)}
+            <span className="divider">/</span>Android {size(history ? recordLogs?.android.bytes || 0 : state.androidBytes)}
           </span>
         </footer>
       </main>
@@ -702,7 +788,7 @@ export default function App() {
                   }
                 >
                   <FolderOpen size={14} />
-                  打开记录日志
+                  打开记录目录
                 </button>
               )}
             </div>

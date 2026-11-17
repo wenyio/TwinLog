@@ -1,1 +1,16 @@
-{"$schema":"https://wails.io/schemas/config.v2.json","name":"TwinLog","outputfilename":"TwinLog","frontend:install":"npm install","frontend:build":"npm run build","frontend:dev:watcher":"npm run dev","frontend:dev:serverUrl":"auto","author":{"name":"TwinLog"}}
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "TwinLog",
+  "outputfilename": "TwinLog",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "TwinLog"
+  },
+  "info": {
+    "productName": "TwinLog",
+    "productVersion": "0.2.0"
+  }
+}

@@ -1,0 +1,120 @@
+package capture
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"unicode/utf8"
+)
+
+func historyRecord(t *testing.T, root, name string) string {
+	t.Helper()
+	p := filepath.Join(root, "session", name)
+	if err := os.MkdirAll(p, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSON(filepath.Join(p, "record.json"), Record{Title: name, StartedAt: "2026-11-17T10:00:00Z", EndedAt: "2026-11-17T10:01:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"mcu.log", "android.log", "notes.txt"} {
+		if err := os.WriteFile(filepath.Join(p, name), []byte("保留内容\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return p
+}
+
+func TestHistoryLogPreview(t *testing.T) {
+	m := NewManager(nil)
+	p := historyRecord(t, t.TempDir(), "record")
+	var text strings.Builder
+	for i := 0; i < 3500; i++ {
+		fmt.Fprintf(&text, "第 %04d 行日志\r\n", i)
+	}
+	if err := os.WriteFile(filepath.Join(p, "android.log"), []byte(text.String()), 0644); err != nil {
+		t.Fatal(err)
+	}
+	logs, err := m.ReadRecordLogs(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if logs.MCU.Text != "保留内容\n" || logs.MCU.Truncated {
+		t.Fatalf("small log: %+v", logs.MCU)
+	}
+	if !logs.Android.Truncated || logs.Android.Bytes != int64(text.Len()) || !strings.HasPrefix(logs.Android.Text, "第 1500 行日志") || !strings.HasSuffix(logs.Android.Text, "第 3499 行日志\r\n") {
+		t.Fatal("line-limited preview did not preserve the expected tail")
+	}
+	long := strings.Repeat("串口", previewBytes)
+	if err := os.WriteFile(filepath.Join(p, "mcu.log"), []byte(long), 0644); err != nil {
+		t.Fatal(err)
+	}
+	logs, err = m.ReadRecordLogs(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !logs.MCU.Truncated || len(logs.MCU.Text) > previewBytes || !utf8.ValidString(logs.MCU.Text) || strings.ContainsRune(logs.MCU.Text, '�') {
+		t.Fatal("unbounded or broken UTF-8 preview")
+	}
+	if _, err := m.ReadRecordLogs(filepath.Dir(p)); err == nil {
+		t.Fatal("accepted non-record folder")
+	}
+}
+
+func TestTrashRecordsPreservesLogsAndSkipsListing(t *testing.T) {
+	root := t.TempDir()
+	a, b := historyRecord(t, root, "one"), historyRecord(t, root, "two")
+	full := filepath.Join(root, "session", "full")
+	if err := os.MkdirAll(full, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(full, "mcu.log"), []byte("full retained"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(nil)
+	// Validate every target before moving any record.
+	if _, err := m.TrashRecords(root, []string{a, full}); err == nil {
+		t.Fatal("accepted full logs")
+	}
+	if _, err := os.Stat(a); err != nil {
+		t.Fatal("moved record before validating batch")
+	}
+	m.record = &Record{Path: a}
+	if _, err := m.TrashRecords(root, []string{b}); err == nil {
+		t.Fatal("deleted while capturing")
+	}
+	m.record = nil
+	batch, err := m.TrashRecords(root, []string{a, b, a})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, original := range []string{a, b} {
+		if _, err := os.Stat(original); !os.IsNotExist(err) {
+			t.Fatalf("original still exists: %v", err)
+		}
+		path := filepath.Join(batch, fmt.Sprintf("%d_%s", i+1, filepath.Base(original)))
+		r, err := loadRecord(path)
+		if err != nil || r.Notes != "保留内容\n" {
+			t.Fatalf("notes not retained: %+v %v", r, err)
+		}
+		logs, err := m.ReadRecordLogs(path)
+		if err != nil || logs.MCU.Text != "保留内容\n" || logs.Android.Text != "保留内容\n" {
+			t.Fatal("logs not retained", err)
+		}
+	}
+	if b, err := os.ReadFile(filepath.Join(full, "mcu.log")); err != nil || string(b) != "full retained" {
+		t.Fatal("full logs changed", err)
+	}
+	if b, err := os.ReadFile(filepath.Join(batch, "restore.json")); err != nil || !strings.Contains(string(b), "1_one") {
+		t.Fatal("restore mapping missing", err)
+	}
+	records, err := m.ListRecords(root)
+	if err != nil || len(records) != 0 {
+		t.Fatalf("trashed records listed: %+v %v", records, err)
+	}
+	outside := historyRecord(t, t.TempDir(), "outside")
+	if _, err := m.TrashRecords(root, []string{outside}); err == nil {
+		t.Fatal("accepted record outside root")
+	}
+}

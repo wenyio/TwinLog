@@ -113,7 +113,7 @@ func (m *Manager) ListRecords(root string) ([]Record, error) {
 		if !d.IsDir() {
 			return nil
 		}
-		if d.Name() == "full" {
+		if d.Name() == "full" || d.Name() == ".twinlog-trash" {
 			return filepath.SkipDir
 		}
 		if _, e := os.Stat(filepath.Join(path, "record.json")); e != nil {

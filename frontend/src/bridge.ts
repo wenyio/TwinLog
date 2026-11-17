@@ -33,6 +33,15 @@ export interface State {
   mcuBytes: number;
   androidBytes: number;
 }
+export interface LogPreview {
+  text: string;
+  bytes: number;
+  truncated: boolean;
+}
+export interface RecordLogs {
+  mcu: LogPreview;
+  android: LogPreview;
+}
 export interface Port {
   name: string;
   description: string;
@@ -72,6 +81,8 @@ type Backend = {
   StopCapture(): Promise<RecordItem>;
   SaveNotes(path: string, notes: string): Promise<void>;
   ListRecords(root: string): Promise<RecordItem[]>;
+  ReadRecordLogs(path: string): Promise<RecordLogs>;
+  DeleteRecords(paths: string[]): Promise<string>;
   ExportRecords(paths: string[], full: boolean): Promise<string>;
   OpenFolder(path: string): Promise<void>;
 };

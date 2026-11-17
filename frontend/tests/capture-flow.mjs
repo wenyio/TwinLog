@@ -82,6 +82,9 @@ try {
       failConnect: false,
       failStart: false,
       failSave: false,
+      failRead: false,
+      deleteApproved: false,
+      deleted: [],
     };
     window.go = {
       main: {
@@ -89,6 +92,21 @@ try {
           GetConfig: async () => config,
           GetState: async () => structuredClone(state),
           ListRecords: async () => structuredClone(records),
+          ReadRecordLogs: async (path) => {
+            if (window.calls.failRead) throw Error("模拟日志读取失败");
+            return {
+              mcu: { text: path + " MCU 历史内容\n", bytes: 600000, truncated: true },
+              android: { text: path + " Android 历史内容\n", bytes: 90, truncated: false },
+            };
+          },
+          DeleteRecords: async (paths) => {
+            if (!window.calls.deleteApproved) return "";
+            window.calls.deleted.push(...paths);
+            for (let i = records.length - 1; i >= 0; i--) {
+              if (paths.includes(records[i].path)) records.splice(i, 1);
+            }
+            return "test/.twinlog-trash/batch";
+          },
           ListPorts: async () => [],
           ListDevices: async () => [],
           Connect: async () => {
@@ -207,6 +225,11 @@ try {
   assert.equal(await notes.inputValue(), "草稿备注");
   await page.locator(".history-row button").first().click();
   assert.equal(await title.inputValue(), "旧记录");
+  await page.getByText("test/old MCU 历史内容", { exact: false }).waitFor();
+  assert.ok(await page.getByText("test/old Android 历史内容", { exact: false }).isVisible());
+  assert.ok(await page.getByText("仅预览末尾最多 2000 行 / 256 KB，全文请打开记录目录", { exact: true }).isVisible());
+  await page.evaluate(() => window.sendLogs());
+  assert.ok(!(await page.locator(".log-pane pre").first().textContent()).includes("MCU 保留日志"));
   assert.equal(
     await capture
       .getByRole("button", { name: "开始抓取", exact: true })
@@ -232,6 +255,10 @@ try {
   await capture.getByText("抓取中", { exact: true }).waitFor();
   assert.ok(await title.isDisabled());
   assert.ok(await newCapture().isDisabled());
+  assert.ok(await page.getByRole("checkbox", { name: "选择 未开始草稿", exact: true }).isDisabled());
+  await page.getByRole("checkbox", { name: "全选记录", exact: true }).check();
+  assert.equal(await page.locator('.history-row input:checked').count(), 1);
+  assert.ok(await page.getByRole("button", { name: "删除所选", exact: true }).isDisabled());
   assert.equal(
     await page.locator(".history-row.active strong").textContent(),
     "未开始草稿",
@@ -282,8 +309,47 @@ try {
       (v) => v.notes === "失败后重试备注",
     ),
   );
+  // Read failures leave the current view intact; retry switches both log panes.
+  await page.evaluate(() => (window.calls.failRead = true));
+  await page.locator(".history-row button").first().click();
+  await page.getByText("Error: 模拟日志读取失败", { exact: true }).waitFor();
+  assert.equal(await title.inputValue(), "");
+  await page.evaluate(() => (window.calls.failRead = false));
+  await page.locator(".history-row button").first().click();
+  await page.getByText("test/new MCU 历史内容", { exact: false }).waitFor();
+  await page.getByRole("button", { name: "返回实时", exact: true }).click();
+  await page.getByText("MCU 保留日志", { exact: false }).first().waitFor();
+  await page.locator(".history-row button").first().click();
+  const selectAll = page.getByRole("checkbox", { name: "全选记录", exact: true });
+  assert.equal(await selectAll.evaluate((el) => el.indeterminate), true);
+  await selectAll.check();
+  assert.equal(await page.locator('.history-row input:checked').count(), 2);
+  if (process.env.TWINLOG_SCREENSHOT) {
+    await page.screenshot({ path: process.env.TWINLOG_SCREENSHOT });
+  }
+  await selectAll.uncheck();
+  assert.equal(await page.locator('.history-row input:checked').count(), 0);
+  await page.getByRole("checkbox", { name: "选择 未开始草稿", exact: true }).check();
+  await page.getByRole("button", { name: "删除所选", exact: true }).click();
+  await page.waitForFunction(() => !document.querySelector('.delete-records').disabled);
+  assert.equal(await page.locator('.history-row').count(), 2);
+  assert.equal(await title.inputValue(), "未开始草稿");
+  await notes.fill("删除前备注");
+  await page.evaluate(() => (window.calls.deleteApproved = true));
+  await page.getByRole("button", { name: "删除所选", exact: true }).click();
+  await page.getByText("已将 1 条记录移入回收目录：test/.twinlog-trash/batch", { exact: true }).waitFor();
+  assert.equal(await page.locator('.history-row').count(), 1);
+  assert.equal(await title.inputValue(), "");
+  assert.deepEqual(await page.evaluate(() => window.calls.deleted), ["test/new"]);
+  assert.ok((await page.evaluate(() => window.calls.saves)).some((v) => v.notes === "删除前备注"));
+  assert.ok(await page.getByRole("button", { name: "删除所选", exact: true }).isDisabled());
+  await selectAll.check();
+  await page.getByRole("button", { name: "删除所选", exact: true }).click();
+  await page.getByText("还没有抓取记录", { exact: true }).waitFor();
+  assert.ok(await selectAll.isDisabled());
+  assert.equal(await selectAll.isChecked(), false);
   console.log(
-    "PASS: disconnected routing, connect failure/retry, reconnect draft/focus, prepare/focus, repeat-safe drafts, history round trip, start failure, capture selection, stop/save, post-stop notes, save failure retry, unchanged previews",
+    "PASS: capture flow, drafts, notes retry, history log switching/read failure, live isolation, return to live, selection/indeterminate/select all, active capture protection, delete cancellation, save before delete, selected view cleanup and empty list",
   );
 } finally {
   await browser?.close();
