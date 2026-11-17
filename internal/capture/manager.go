@@ -60,6 +60,7 @@ type Manager struct {
 	config                           Config
 	sessionDir                       string
 	lastError                        string
+	trackerError                     string
 	record                           *Record
 	mcu, android, capMCU, capAndroid *logFile
 	port                             serial.Port
@@ -77,6 +78,21 @@ type Manager struct {
 func NewManager(emit func(string, any)) *Manager { return &Manager{emit: emit} }
 func (m *Manager) stateLocked() State {
 	s := State{Connected: m.connected, Capturing: m.record != nil, SessionDir: m.sessionDir, Config: m.config, Error: m.lastError, McuBytes: m.mcuBytes, AndroidBytes: m.androidBytes}
+	if m.connected && m.config.Package != "" {
+		if m.filter.pidOnly {
+			if len(m.filter.pids) == 0 {
+				s.FilterStatus = "等待应用启动"
+			} else {
+				s.FilterStatus = fmt.Sprintf("应用进程过滤 · %d 个进程", len(m.filter.pids))
+			}
+			if m.connected && m.trackerError != "" {
+				s.FilterStatus = "应用过滤暂不可用，正在重试；完整日志继续保存"
+				s.FilterWarning = m.trackerError
+			}
+		} else {
+			s.FilterStatus = "应用 UID 过滤"
+		}
+	}
 	if m.record != nil {
 		r := *m.record
 		s.ActiveRecord = &r
@@ -139,7 +155,7 @@ func (m *Manager) Connect(c Config) error {
 	default:
 		return fmt.Errorf("不支持的校验位")
 	}
-	uid, e := resolveUID(c.ADBPath, c.AndroidSerial, c.Package)
+	identity, e := resolveIdentity(c.ADBPath, c.AndroidSerial, c.Package)
 	if e != nil {
 		return e
 	}
@@ -156,6 +172,16 @@ func (m *Manager) Connect(c Config) error {
 	}
 	if !strings.Contains(help, "uid") {
 		return fmt.Errorf("设备 logcat 不支持 UID 格式，无法可靠过滤应用")
+	}
+	var pids map[string]bool
+	systemPID := ""
+	trackerWarning := ""
+	if identity.shared {
+		pids, systemPID, e = packageSnapshot(context.Background(), c.ADBPath, c.AndroidSerial, c.Package)
+		if e != nil {
+			trackerWarning = e.Error()
+			pids = map[string]bool{}
+		}
 	}
 	stops := serial.OneStopBit
 	if c.StopBits == 2 {
@@ -233,19 +259,29 @@ func (m *Manager) Connect(c Config) error {
 	m.config = c
 	m.sessionDir = dir
 	m.lastError = ""
+	m.trackerError = trackerWarning
 	m.port = port
 	m.cmd = cmd
 	m.cancel = cancel
 	m.mcu = mf
 	m.android = af
 	m.stamp = TimestampStream{}
-	m.filter.SetUID(uid)
+	m.filter.SetUID(identity.uid)
+	if identity.shared {
+		m.filter.SetPIDs(identity.uid, pids)
+		m.filter.packageName = c.Package
+		m.filter.systemPID = systemPID
+	}
 	m.previewMCU = nil
 	m.previewAndroid = nil
 	m.mcuBytes = 0
 	m.androidBytes = 0
+	if trackerWarning != "" {
+		m.recordFilterEventLocked("unavailable", trackerWarning)
+	}
 	m.mu.Unlock()
-	m.wg.Add(4)
+	m.wg.Add(5)
+	go func() { defer m.wg.Done(); m.trackProcesses(ctx) }()
 	go func() { defer m.wg.Done(); m.readStream(ctx, "mcu", port) }()
 	go func() {
 		defer m.wg.Done()
@@ -456,17 +492,36 @@ func (m *Manager) SetPackage(pkg string) error {
 	c := m.config
 	connected := m.connected
 	m.mu.Unlock()
-	uid := ""
+	identity := appIdentity{}
+	var pids map[string]bool
+	systemPID := ""
+	trackerWarning := ""
 	var e error
 	if connected {
-		uid, e = resolveUID(c.ADBPath, c.AndroidSerial, pkg)
+		identity, e = resolveIdentity(c.ADBPath, c.AndroidSerial, pkg)
 		if e != nil {
 			return e
+		}
+		if identity.shared {
+			pids, systemPID, e = packageSnapshot(context.Background(), c.ADBPath, c.AndroidSerial, pkg)
+			if e != nil {
+				trackerWarning = e.Error()
+				pids = map[string]bool{}
+			}
 		}
 	}
 	m.mu.Lock()
 	m.config.Package = pkg
-	m.filter.SetUID(uid)
+	m.trackerError = trackerWarning
+	m.filter.SetUID(identity.uid)
+	if identity.shared {
+		m.filter.SetPIDs(identity.uid, pids)
+		m.filter.packageName = pkg
+		m.filter.systemPID = systemPID
+	}
+	if trackerWarning != "" {
+		m.recordFilterEventLocked("unavailable", trackerWarning)
+	}
 	m.previewAndroid = nil
 	m.mu.Unlock()
 	m.notify()
@@ -501,6 +556,7 @@ func (m *Manager) StartCapture(title, notes string) (Record, error) {
 		return Record{}, e
 	}
 	r := Record{Path: dir, Title: title, Notes: notes, StartedAt: nowISO(), Package: m.config.Package}
+	r.FilterGaps = m.trackerError != ""
 	if e = AtomicWrite(filepath.Join(dir, "notes.txt"), []byte(notes)); e == nil {
 		e = writeJSON(filepath.Join(dir, "record.json"), r)
 	}

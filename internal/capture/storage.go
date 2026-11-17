@@ -249,10 +249,15 @@ func (m *Manager) Export(paths []string, destination string, includeFull bool) e
 	}
 	if err == nil {
 		for s := range sessions {
-			if _, e := os.Stat(filepath.Join(s, "session.json")); e == nil {
-				if err = add(filepath.Join(s, "session.json"), filepath.Join(filepath.Base(s), "session.json")); err != nil {
-					break
+			for _, name := range []string{"session.json", "events.jsonl"} {
+				if _, e := os.Stat(filepath.Join(s, name)); e == nil {
+					if err = add(filepath.Join(s, name), filepath.Join(filepath.Base(s), name)); err != nil {
+						break
+					}
 				}
+			}
+			if err != nil {
+				break
 			}
 		}
 	}

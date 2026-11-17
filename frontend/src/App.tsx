@@ -337,7 +337,7 @@ export default function App() {
             <b>TwinLog</b>
             <span>双路日志助手</span>
           </div>
-          <span className="version">v0.1</span>
+          <span className="version">v0.1.2</span>
         </div>
         <div className="sidebar-top">
           <div>
@@ -408,6 +408,7 @@ export default function App() {
                       : !r.endedAt
                         ? "抓取中"
                         : r.package || "全部应用"}
+                    {r.filterGaps ? " · 应用过滤有缺口" : ""}
                   </small>
                 </button>
               </div>
@@ -798,8 +799,21 @@ export default function App() {
               加载应用
             </button>
             <span>留空为全部 · full 始终保存全量</span>
+            {state.filterStatus && (
+              <span className="filter-status" title={state.filterWarning}>
+                {state.filterStatus}
+              </span>
+            )}
           </div>
         </section>
+        {state.filterWarning && (
+          <div className="preview-banner" title={state.filterWarning}>
+            <AlertCircle size={16} />
+            <span>
+              应用过滤暂不可用，正在重试；MCU 和完整 Android 日志继续保存。
+            </span>
+          </div>
+        )}
         <div className="logs-grid">
           <LogPane source="mcu" text={mcu} clear={() => setMcu("")} />
           <LogPane

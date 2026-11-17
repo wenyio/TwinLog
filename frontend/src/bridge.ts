@@ -19,6 +19,7 @@ export interface RecordItem {
   endedAt: string;
   package: string;
   interrupted: boolean;
+  filterGaps?: boolean;
 }
 export interface State {
   connected: boolean;
@@ -27,6 +28,8 @@ export interface State {
   activeRecord: RecordItem | null;
   config: Config;
   error: string;
+  filterStatus?: string;
+  filterWarning?: string;
   mcuBytes: number;
   androidBytes: number;
 }

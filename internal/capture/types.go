@@ -21,16 +21,19 @@ type Record struct {
 	EndedAt     string `json:"endedAt"`
 	Package     string `json:"package"`
 	Interrupted bool   `json:"interrupted"`
+	FilterGaps  bool   `json:"filterGaps,omitempty"`
 }
 type State struct {
-	Connected    bool    `json:"connected"`
-	Capturing    bool    `json:"capturing"`
-	SessionDir   string  `json:"sessionDir"`
-	ActiveRecord *Record `json:"activeRecord"`
-	Config       Config  `json:"config"`
-	Error        string  `json:"error"`
-	McuBytes     uint64  `json:"mcuBytes"`
-	AndroidBytes uint64  `json:"androidBytes"`
+	Connected     bool    `json:"connected"`
+	Capturing     bool    `json:"capturing"`
+	SessionDir    string  `json:"sessionDir"`
+	ActiveRecord  *Record `json:"activeRecord"`
+	Config        Config  `json:"config"`
+	Error         string  `json:"error"`
+	FilterStatus  string  `json:"filterStatus"`
+	FilterWarning string  `json:"filterWarning"`
+	McuBytes      uint64  `json:"mcuBytes"`
+	AndroidBytes  uint64  `json:"androidBytes"`
 }
 type PortInfo struct {
 	Name        string `json:"name"`
