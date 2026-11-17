@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useRef } from "react";
 import {
   Activity,
   Usb,
@@ -56,11 +56,22 @@ function LogPane({
   clear: () => void;
 }) {
   const [paused, setPaused] = useState(false);
+  const [snapshot, setSnapshot] = useState("");
   const pre = useRef<HTMLPreElement>(null);
-  useEffect(() => {
+  const displayedText = paused ? snapshot : text;
+  useLayoutEffect(() => {
     if (!paused && pre.current)
       pre.current.scrollTop = pre.current.scrollHeight;
   }, [text, paused]);
+  const togglePaused = () => {
+    if (!paused) setSnapshot(text);
+    setPaused((value) => !value);
+  };
+  const clearPreview = () => {
+    setSnapshot("");
+    clear();
+    if (pre.current) pre.current.scrollTop = 0;
+  };
   return (
     <section className="log-pane">
       <header>
@@ -72,17 +83,19 @@ function LogPane({
         <div className="grow" />
         <button
           className={"icon " + (paused ? "toggled" : "")}
-          title="暂停/继续自动滚动"
-          onClick={() => setPaused(!paused)}
+          title={paused ? "继续自动滚动，显示最新日志" : "暂停自动滚动，固定当前预览"}
+          aria-label={paused ? "继续自动滚动" : "暂停自动滚动"}
+          aria-pressed={paused}
+          onClick={togglePaused}
         >
           {paused ? <Play size={14} /> : <Pause size={14} />}
         </button>
-        <button className="icon" title="清空预览，不影响保存" onClick={clear}>
+        <button className="icon" title="清空预览，不影响保存" onClick={clearPreview}>
           <Trash2 size={14} />
         </button>
       </header>
       <pre ref={pre}>
-        {text || (
+        {displayedText || (
           <span className="log-empty">
             {source === "mcu" ? "等待串口数据…" : "等待 Android 日志…"}
             <br />
@@ -91,7 +104,7 @@ function LogPane({
         )}
       </pre>
       <footer>
-        <span>{paused ? "自动滚动已暂停" : "自动滚动"}</span>
+        <span>{paused ? "预览已暂停 · 后台继续保存" : "自动滚动"}</span>
         <span>清屏仅影响预览</span>
       </footer>
     </section>
