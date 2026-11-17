@@ -12,7 +12,7 @@ var assets embed.FS
 
 func main() {
 	app := NewApp()
-	err := wails.Run(&options.App{Title: "TwinLog · 双路日志助手", Width: 1440, Height: 940, MinWidth: 1080, MinHeight: 720,
+	err := wails.Run(&options.App{Title: "TwinLog · 双路日志助手", Width: 1440, Height: 780, MinWidth: 1080, MinHeight: 640,
 		AssetServer: &assetserver.Options{Assets: assets}, BackgroundColour: &options.RGBA{R: 245, G: 247, B: 250, A: 255},
 		OnStartup: app.startup, OnBeforeClose: app.beforeClose, OnShutdown: app.shutdown, Bind: []interface{}{app},
 	})

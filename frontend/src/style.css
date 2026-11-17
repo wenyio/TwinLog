@@ -74,10 +74,11 @@ label {
 .app-shell {
   display: flex;
   height: 100vh;
-  min-height: 720px;
+  min-height: 0;
   overflow: hidden;
 }
 .sidebar {
+  min-height: 0;
   width: 255px;
   flex-shrink: 0;
   background: #fff;
@@ -164,6 +165,7 @@ label {
   font-weight: 600;
 }
 .history-list {
+  min-height: 0;
   flex: 1;
   overflow: auto;
   padding: 0 10px;
@@ -737,5 +739,41 @@ pre {
   }
   .connection-heading > span {
     font-size: 10px;
+  }
+}
+@media (max-height: 800px) {
+  main {
+    padding-top: 16px;
+    gap: 10px;
+  }
+  .connection-heading {
+    padding-top: 9px;
+    padding-bottom: 9px;
+  }
+  .connection-body {
+    padding-bottom: 12px;
+  }
+  .device-grid {
+    padding-top: 10px;
+  }
+  .path-row {
+    margin-top: 10px;
+  }
+  .capture-card {
+    padding-top: 11px;
+    padding-bottom: 11px;
+  }
+  .capture-controls {
+    margin-top: 6px;
+  }
+  .app-select {
+    margin-top: 8px;
+    padding-top: 8px;
+  }
+  .logs-grid {
+    min-height: 180px;
+  }
+  .notes-card textarea {
+    min-height: 60px;
   }
 }
