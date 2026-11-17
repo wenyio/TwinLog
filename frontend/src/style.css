@@ -1014,11 +1014,14 @@ main {
   margin: 0;
 }
 .title-input {
-  font-size: 13px;
+  flex: 0 0 44px;
+  min-height: 44px;
+  font-size: 14px;
   font-weight: 500;
-  height: 35px;
+  height: 44px;
+  line-height: 22px;
   border: 1px solid #dae1e7;
-  padding: 0 10px;
+  padding: 10px 12px;
 }
 .title-input:focus {
   outline: 2px solid #83cfc5;
