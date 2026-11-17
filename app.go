@@ -15,13 +15,15 @@ import (
 )
 
 type App struct {
-	ctx          context.Context
-	manager      *capture.Manager
-	mu           sync.Mutex
-	config       capture.Config
-	settings     string
-	closing      bool
-	closeAllowed bool
+	ctx           context.Context
+	manager       *capture.Manager
+	mu            sync.Mutex
+	config        capture.Config
+	settings      string
+	closing       bool
+	awaitingNotes bool
+	closeRequest  uint64
+	closeAllowed  bool
 }
 
 func NewApp() *App {
@@ -50,44 +52,57 @@ func (a *App) beforeClose(ctx context.Context) bool {
 		return true
 	}
 	a.closing = true
+	a.awaitingNotes = true
+	a.closeRequest++
+	request := a.closeRequest
 	a.mu.Unlock()
 	wruntime.EventsEmit(ctx, "before-close")
 	go func() {
 		time.Sleep(8 * time.Second)
 		a.mu.Lock()
-		waiting := a.closing && !a.closeAllowed
-		a.closing = false
+		waiting := a.closing && a.awaitingNotes && a.closeRequest == request
+		if waiting {
+			a.closing = false
+			a.awaitingNotes = false
+		}
 		a.mu.Unlock()
 		if waiting {
-			wruntime.EventsEmit(ctx, "error", "退出尚未完成，请检查备注保存或退出确认")
+			wruntime.EventsEmit(ctx, "error", "备注保存未完成，请稍后重试退出")
 		}
 	}()
 	return true
 }
 func (a *App) ConfirmClose(ok bool) {
+	a.mu.Lock()
+	if !a.closing || !a.awaitingNotes {
+		a.mu.Unlock()
+		return
+	}
+	a.awaitingNotes = false
 	if !ok {
-		a.mu.Lock()
 		a.closing = false
 		a.mu.Unlock()
 		return
 	}
+	a.mu.Unlock()
 	go func() {
-		if a.manager.State().Connected {
-			answer, e := wruntime.MessageDialog(a.ctx, wruntime.MessageDialogOptions{Type: wruntime.QuestionDialog, Title: "结束采集", Message: "退出会停止当前抓取并断开两路采集。确定退出？", Buttons: []string{"继续采集", "保存并退出"}, DefaultButton: "继续采集", CancelButton: "继续采集"})
-			if e != nil || answer != "保存并退出" {
-				a.mu.Lock()
-				a.closing = false
-				a.mu.Unlock()
-				return
+		exited := finishClose(func() (bool, error) {
+			if !a.manager.State().Connected {
+				return true, nil
 			}
+			answer, e := wruntime.MessageDialog(a.ctx, exitDialogOptions())
+			return answer == "Yes", e
+		}, a.manager.Disconnect, func() {
+			a.mu.Lock()
+			a.closeAllowed = true
+			a.mu.Unlock()
+			wruntime.Quit(a.ctx)
+		}, func(e error) { wruntime.EventsEmit(a.ctx, "error", e.Error()) })
+		if !exited {
+			a.mu.Lock()
+			a.closing = false
+			a.mu.Unlock()
 		}
-		if e := a.manager.Disconnect(); e != nil {
-			wruntime.EventsEmit(a.ctx, "error", e.Error())
-		}
-		a.mu.Lock()
-		a.closeAllowed = true
-		a.mu.Unlock()
-		wruntime.Quit(a.ctx)
 	}()
 }
 func (a *App) shutdown(ctx context.Context) { _ = a.manager.Disconnect() }
