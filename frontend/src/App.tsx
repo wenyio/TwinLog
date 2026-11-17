@@ -130,7 +130,7 @@ function LogPane({
 }
 export default function App() {
   const [operationsTab, setOperationsTab] = useState<"capture" | "connection">(
-    "capture",
+    "connection",
   );
   const [layout, setLayout] = useState(loadLayout);
   useEffect(() => {
@@ -159,12 +159,27 @@ export default function App() {
     [android, setAndroid] = useState(""),
     [saved, setSaved] = useState(true);
   const pending = useRef<{ path: string; text: string } | null>(null),
+    draft = useRef({ title: "", notes: "" }),
+    titleInput = useRef<HTMLInputElement>(null),
+    focusTitle = useRef(false),
     saving = useRef<Promise<void>>(Promise.resolve()),
     timer = useRef<ReturnType<typeof setTimeout> | null>(null),
     viewRef = useRef<RecordItem | null>(null),
     stateRef = useRef(state),
     flushRef = useRef<() => Promise<void>>(async () => {});
   stateRef.current = state;
+  useEffect(() => {
+    if (
+      focusTitle.current &&
+      !busy &&
+      !view &&
+      layout.right &&
+      operationsTab === "capture"
+    ) {
+      titleInput.current?.focus();
+      focusTitle.current = false;
+    }
+  }, [busy, view, layout.right, operationsTab]);
   const refreshRecords = async (root = config.outputDir) => {
     if (desktop() && root) setRecords((await api.ListRecords(root)) || []);
   };
@@ -204,6 +219,10 @@ export default function App() {
   flushRef.current = flush;
   const updateNotes = (text: string) => {
     setNotes(text);
+    if (!viewRef.current) {
+      draft.current.notes = text;
+      return;
+    }
     const path = viewRef.current?.path || stateRef.current.activeRecord?.path;
     if (!path) return;
     setRecords((rs) =>
@@ -276,15 +295,28 @@ export default function App() {
       refreshRecords().catch((e) => setError(String(e)));
   }, [state.connected, state.capturing]);
   const patch = (v: Partial<Config>) => setConfig((c) => ({ ...c, ...v }));
-  const changeView = async (r: RecordItem | null) => {
+  const changeView = async (r: RecordItem) => {
     await flush();
     setOperationsTab("capture");
+    setLayout((v) => ({ ...v, right: true }));
     viewRef.current = r;
     setView(r);
-    setTitle(r?.title || "");
-    setNotes(r?.notes || "");
+    setTitle(r.title);
+    setNotes(r.notes);
     setSaved(true);
   };
+  const prepareCapture = () =>
+    run("新建抓取", async () => {
+      await flush();
+      viewRef.current = null;
+      setView(null);
+      setTitle(draft.current.title);
+      setNotes(draft.current.notes);
+      setSaved(true);
+      setLayout((v) => ({ ...v, right: true }));
+      setOperationsTab(stateRef.current.connected ? "capture" : "connection");
+      focusTitle.current = stateRef.current.connected;
+    });
   const chooseDir = () =>
     run("选择目录", async () => {
       const p = await api.SelectDirectory();
@@ -311,6 +343,7 @@ export default function App() {
       await api.Connect(config);
       setState(await api.GetState());
       setOperationsTab("capture");
+      focusTitle.current = !viewRef.current;
       setIncludeFull(false);
     });
   const disconnect = () =>
@@ -327,8 +360,10 @@ export default function App() {
       if (config.package !== state.config.package)
         await api.SetPackage(config.package);
       const r = await api.StartCapture(title, notes);
+      draft.current = { title: "", notes: "" };
       viewRef.current = r;
       setView(r);
+      setTitle(r.title);
       setState(await api.GetState());
       await refreshRecords();
       setSaved(true);
@@ -382,7 +417,8 @@ export default function App() {
         <button
           className="new-record"
           disabled={state.capturing || locked}
-          onClick={() => run("新建记录", async () => changeView(null))}
+          onClick={prepareCapture}
+          aria-current={!view ? "page" : undefined}
         >
           <Plus size={17} />
           新建抓取
@@ -650,7 +686,13 @@ export default function App() {
           <section className="capture-card">
             <div className="capture-heading">
               <span className="eyebrow">
-                {history ? "历史记录" : "新建抓取"}
+                {live
+                  ? "抓取中"
+                  : history
+                    ? view.interrupted
+                      ? "已中断"
+                      : "已保存"
+                    : "待开始"}
               </span>
               {history && (
                 <button
@@ -666,17 +708,30 @@ export default function App() {
             </div>
             <div className="capture-controls">
               <input
+                ref={titleInput}
                 className="title-input"
                 placeholder="标题"
                 aria-label="抓取标题"
                 value={title}
                 disabled={state.capturing || history || locked}
-                onChange={(e) => setTitle(e.target.value)}
+                onChange={(e) => {
+                  setTitle(e.target.value);
+                  draft.current.title = e.target.value;
+                }}
               />
               {state.capturing ? (
                 <button className="stop" disabled={locked} onClick={stop}>
                   <Square size={15} fill="currentColor" />
-                  停止抓取
+                  停止并保存
+                </button>
+              ) : history ? (
+                <button
+                  className="primary"
+                  disabled={locked}
+                  onClick={prepareCapture}
+                >
+                  <Plus size={16} />
+                  新建抓取
                 </button>
               ) : (
                 <button
@@ -766,6 +821,7 @@ export default function App() {
               )}
             </header>
             <textarea
+              disabled={locked}
               value={notes}
               placeholder="输入备注"
               onChange={(e) => updateNotes(e.target.value)}
