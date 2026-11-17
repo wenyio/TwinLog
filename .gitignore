@@ -8,3 +8,21 @@ build/bin/
 *.log
 *.tsbuildinfo
 frontend/package.json.md5
+
+# Local configuration, secrets and device captures
+.env
+.env.*
+!.env.example
+settings.json
+logs/
+captures/
+.twinlog-trash/
+session.json
+record.json
+events.jsonl
+notes.txt
+restore.json
+
+# Local test output
+frontend/playwright-report/
+frontend/test-results/

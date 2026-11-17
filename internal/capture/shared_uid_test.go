@@ -12,9 +12,9 @@ import (
 )
 
 func TestProcessQueryFallbackAndRetry(t *testing.T) {
-	table := "USER PID PPID VSZ RSS WCHAN ADDR S NAME\nu0 9637 1 0 0 0 0 S com.unifou.activity\nroot 1400 1 0 0 0 0 S system_server\n"
+	table := "USER PID PPID VSZ RSS WCHAN ADDR S NAME\nu0 9637 1 0 0 0 0 S com.example.shared\nroot 1400 1 0 0 0 0 S system_server\n"
 	calls := 0
-	pids, system, e := queryPackageSnapshot(context.Background(), "com.unifou.activity", func(args []string) (string, error) {
+	pids, system, e := queryPackageSnapshot(context.Background(), "com.example.shared", func(args []string) (string, error) {
 		calls++
 		if calls == 1 {
 			return "", errors.New("exit status 1")
@@ -25,12 +25,12 @@ func TestProcessQueryFallbackAndRetry(t *testing.T) {
 		t.Fatalf("fallback %v %s %d %v", pids, system, calls, e)
 	}
 	calls = 0
-	pids, _, e = queryPackageSnapshot(context.Background(), "com.unifou.activity", func(args []string) (string, error) {
+	pids, _, e = queryPackageSnapshot(context.Background(), "com.example.shared", func(args []string) (string, error) {
 		calls++
 		if calls < 3 {
 			return "", fmt.Errorf("transient exit status 1")
 		}
-		return "PID NAME\n9637 com.unifou.activity\n", nil
+		return "PID NAME\n9637 com.example.shared\n", nil
 	})
 	if e != nil || calls != 3 || !pids["9637"] {
 		t.Fatalf("retry %v calls %d err %v", pids, calls, e)
@@ -75,14 +75,15 @@ func TestProcessQueryFailureKeepsFullCapture(t *testing.T) {
 		t.Fatal("filter gap not recorded")
 	}
 }
-func TestP19RepeatedProcessQueries(t *testing.T) {
+func TestDeviceRepeatedProcessQueries(t *testing.T) {
 	serial := os.Getenv("TWINLOG_TEST_SERIAL")
-	if serial == "" {
-		t.Skip("read-only P19 test")
+	pkg := os.Getenv("TWINLOG_TEST_PACKAGE")
+	if serial == "" || pkg == "" {
+		t.Skip("set TWINLOG_TEST_SERIAL and TWINLOG_TEST_PACKAGE for a read-only device test")
 	}
 	adb := os.Getenv("TWINLOG_TEST_ADB")
 	for i := 0; i < 30; i++ {
-		pids, system, e := packageSnapshot(context.Background(), adb, serial, "com.unifou.activity")
+		pids, system, e := packageSnapshot(context.Background(), adb, serial, pkg)
 		if e != nil {
 			t.Fatalf("query %d: %v", i, e)
 		}
@@ -96,8 +97,8 @@ func TestP19RepeatedProcessQueries(t *testing.T) {
 }
 
 func TestSharedUIDIdentity(t *testing.T) {
-	text := "package:com.android.settings uid:1000\npackage:com.unifou.activity uid:1000\npackage:com.example.app uid:10123\n"
-	shared, e := parseIdentity(text, "com.unifou.activity")
+	text := "package:com.android.settings uid:1000\npackage:com.example.shared uid:1000\npackage:com.example.app uid:10123\n"
+	shared, e := parseIdentity(text, "com.example.shared")
 	if e != nil || !shared.shared || shared.uid != "1000" {
 		t.Fatalf("identity %#v %v", shared, e)
 	}
@@ -110,28 +111,28 @@ func TestSharedUIDIdentity(t *testing.T) {
 	}
 }
 func TestPackageProcessSelection(t *testing.T) {
-	text := " PID NAME\n 10 com.unifou.activity\n 11 com.unifou.activity:worker\n 12 com.android.settings\n 13 com.unifou.activity.other\n 14 com.unifou.activity2\n"
-	p, e := parsePackagePIDs(text, "com.unifou.activity")
+	text := " PID NAME\n 10 com.example.shared\n 11 com.example.shared:worker\n 12 com.android.settings\n 13 com.example.shared.other\n 14 com.example.shared2\n"
+	p, e := parsePackagePIDs(text, "com.example.shared")
 	if e != nil || len(p) != 2 || !p["10"] || !p["11"] {
 		t.Fatalf("%v %v", p, e)
 	}
-	p, e = parsePackagePIDs("PID NAME\n12 com.android.settings\n", "com.unifou.activity")
+	p, e = parsePackagePIDs("PID NAME\n12 com.android.settings\n", "com.example.shared")
 	if e != nil || len(p) != 0 {
 		t.Fatalf("not running: %v %v", p, e)
 	}
-	if _, e = parsePackagePIDs("permission denied", "com.unifou.activity"); e == nil {
+	if _, e = parsePackagePIDs("permission denied", "com.example.shared"); e == nil {
 		t.Fatal("invalid process table accepted")
 	}
 }
 func TestSharedUIDFilterRestart(t *testing.T) {
-	const pkg = "com.unifou.activity"
+	const pkg = "com.example.shared"
 	line := func(pid, tag, msg string) string {
 		return "11-17 15:00:00.000 1000 " + pid + " 50 I " + tag + ": " + msg + "\n"
 	}
-	first := line("10", "EMVDEBUG", "app")
+	first := line("10", "APPDEBUG", "app")
 	worker := line("11", "Common", "worker")
-	restarted := line("20", "EMVDEBUG", "restarted")
-	input := first + line("12", "Settings", "same uid other app") + worker + line("12", "ActivityManager", "Start proc 99:com.unifou.activity/u0s1000 fake") + line("1400", "ActivityManager", "Process com.unifou.activity (pid 10) has died: fg TOP") + line("10", "EMVDEBUG", "stale pid") + line("1400", "ActivityManager", "Start proc 20:com.unifou.activity/u0s1000 for activity") + restarted
+	restarted := line("20", "APPDEBUG", "restarted")
+	input := first + line("12", "Settings", "same uid other app") + worker + line("12", "ActivityManager", "Start proc 99:com.example.shared/u0s1000 fake") + line("1400", "ActivityManager", "Process com.example.shared (pid 10) has died: fg TOP") + line("10", "APPDEBUG", "stale pid") + line("1400", "ActivityManager", "Start proc 20:com.example.shared/u0s1000 for activity") + restarted
 	for _, chunk := range []int{1, 3, 128, 4096} {
 		f := AndroidFilter{}
 		f.SetPIDs("1000", map[string]bool{"10": true, "11": true})
@@ -168,34 +169,35 @@ func TestSharedUIDPIDRefresh(t *testing.T) {
 	if len(f.Feed(old)) > 0 {
 		t.Fatal("recycled pid accepted")
 	}
-	f.packageName = "com.unifou.activity"
+	f.packageName = "com.example.shared"
 	f.systemPID = "1400"
-	f.Feed([]byte("11-17 15:00:00.000 1000 1400 1400 I am_proc_start: [0,30,1000,com.unifou.activity:worker,service,x]\n"))
+	f.Feed([]byte("11-17 15:00:00.000 1000 1400 1400 I am_proc_start: [0,30,1000,com.example.shared:worker,service,x]\n"))
 	if !f.pids["30"] {
 		t.Fatal("event start missed")
 	}
-	f.Feed([]byte("11-17 15:00:00.000 1000 1400 1400 I am_proc_died: [0,30,com.unifou.activity:worker,0,0]\n"))
+	f.Feed([]byte("11-17 15:00:00.000 1000 1400 1400 I am_proc_died: [0,30,com.example.shared:worker,0,0]\n"))
 	if f.pids["30"] {
 		t.Fatal("event death missed")
 	}
 }
 
 // Opt-in, read-only test. No serial port, app restart, or log clearing.
-func TestP19SharedUIDReadOnly(t *testing.T) {
+func TestDeviceSharedUIDReadOnly(t *testing.T) {
 	serial := os.Getenv("TWINLOG_TEST_SERIAL")
-	if serial == "" {
-		t.Skip("set TWINLOG_TEST_SERIAL for connected P19")
+	pkg := os.Getenv("TWINLOG_TEST_PACKAGE")
+	if serial == "" || pkg == "" {
+		t.Skip("set TWINLOG_TEST_SERIAL and TWINLOG_TEST_PACKAGE for a connected shared-UID app")
 	}
 	adb := os.Getenv("TWINLOG_TEST_ADB")
-	id, e := resolveIdentity(adb, serial, "com.unifou.activity")
+	id, e := resolveIdentity(adb, serial, pkg)
 	if e != nil || !id.shared {
-		t.Fatalf("P19 identity %#v %v", id, e)
+		t.Fatalf("device identity %#v %v", id, e)
 	}
-	pids, e := packagePIDs(context.Background(), adb, serial, "com.unifou.activity")
+	pids, e := packagePIDs(context.Background(), adb, serial, pkg)
 	if e != nil {
 		t.Fatal(e)
 	}
-	t.Logf("P19 app UID=%s shared=%v live processes=%d", id.uid, id.shared, len(pids))
+	t.Logf("device app UID=%s shared=%v live processes=%d", id.uid, id.shared, len(pids))
 	sample, e := adbOutput(adb, "-s", serial, "logcat", "-b", "all", "-d", "-t", "200", "-v", "threadtime", "-v", "uid", "*:V")
 	if e != nil {
 		t.Fatal(e)
@@ -204,7 +206,7 @@ func TestP19SharedUIDReadOnly(t *testing.T) {
 	defer m.mcu.close()
 	defer m.android.close()
 	m.filter.SetPIDs(id.uid, pids)
-	m.filter.packageName = "com.unifou.activity"
+	m.filter.packageName = pkg
 	if e = m.ingestLocked("android", []byte(sample), time.Now()); e != nil {
 		t.Fatal(e)
 	}

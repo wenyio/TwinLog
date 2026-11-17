@@ -2,13 +2,15 @@
 
 Windows 桌面工具，同时保存 MCU 串口和 Android logcat。Go + Wails + React + TypeScript，无数据库。
 
+支持双路持续日志、按标题抓取、普通文本备注、Android 应用过滤、历史预览与 ZIP 导出，采用 [MIT 协议](LICENSE)。版本见界面及 `frontend/package.json`。
+
 ## 使用
 
 运行 build/bin/TwinLog.exe。选择串口、Android 设备和保存目录，点击“连接并持续采集”。如需只抓某个应用，选择设备后点击“加载应用”，输入/选择包名；留空表示全部应用。
 
 输入标题与备注，Start 开始，Stop 保存当前抓取。Stop 后完整日志继续记录；点击左侧“新建抓取”开始下一条。备注自动保存，停止后可在历史记录里补充。点击左侧记录，中间两窗显示该条抓取的 MCU / Android 历史日志，并显示记录标题；大日志仅预览末尾最多 2000 行 / 256 KB，点击“打开记录目录”用文本工具查看全文。“返回实时”恢复实时预览，后台完整日志持续保存。
 
-勾选记录导出 ZIP。附带完整日志前先断开连接；正常退出会保存备注并停止采集。使用前关闭 SuperCom 对同一串口的连接。
+勾选记录导出 ZIP。附带完整日志前先断开连接；正常退出会保存备注并停止采集。使用前关闭其他工具对同一串口的连接。
 
 左侧“全选”可全选 / 取消全选，部分勾选时显示半选状态及数量。“删除”确认后把记录日志和备注移入保存目录下的 `.twinlog-trash/删除时间/`，不会永久擦除文件，也不影响会话的 `full` 完整日志。需找回时退出程序，参照该回收批次的 `restore.json` 将记录文件夹移回原路径；抓取期间禁止删除，当前抓取不能勾选。
 
@@ -25,21 +27,55 @@ MCU 行首格式：[2026-11-17 11:56:10.745] 。空行同样有时间戳，跨�
 - 串口无法补回打开前的数据，Android 只能读取尚未覆盖且有权限访问的缓存。首次连接会回放缓存，正式 Start 前请等回放稳定。
 - 界面只保留最近 2000 行（另有字符上限）；暂停滚动、清屏不影响保存。采集期间数据同时写 full 和当前抓取，磁盘保存两份抓取内容。
 - 缓冲约每秒刷新，正常停止同步文件；异常终止或断电可能损失尾部。保存错误会明确报错停止。
-- 首版已完成模拟数据自动测试及 Windows 构建/启动检查，尚未完成真实 P19/串口热插拔、8 小时稳定性验证。
+- 历史验证记录见 `docs`，各记录仅代表对应版本和环境；真实设备兼容性、串口热插拔与 8 小时稳定性仍需验证。
 
 ## 开发与构建
 
-需要 Go、Node.js/npm、Wails v2。本次使用 Go 1.27.4、Wails 2.17.1；Go 放在项目 .tools/go，不修改系统 PATH。
+在 Windows PowerShell 中构建。需要 Go（最低版本见 `go.mod`，本地开发使用 1.27.4）、Node.js 22 LTS/npm，以及 Wails 2.17.1。Wails 的 Windows 开发环境要求见 [官方文档](https://wails.io/docs/gettingstarted/installation)。
 
-在当前 PowerShell 将 .tools/go/bin 和用户 go/bin 加入 PATH，运行：
+如果把 Go 解压到 `.tools/go`，开发和构建脚本会优先使用它，只修改当前进程 PATH；也可以使用 PATH 中的 Go。仓库不包含 Go、ADB、设备驱动或 WebView2 安装包。
 
-    go install github.com/wailsapp/wails/v2/cmd/wails@v2.17.1
-    wails dev
-    wails build
-    go test ./...
-    go vet ./...
+首次准备（在仓库根目录运行）：
 
-官方 Go 源不通时，可对当前终端设置 GOPROXY=https://goproxy.cn,direct。前端使用 npm lockfile；离线交付需提前准备 WebView2、ADB 及驱动。
+```powershell
+if (Test-Path .tools/go/bin/go.exe) {
+    $env:PATH = "$PWD/.tools/go/bin;" + $env:PATH
+}
+$env:PATH = "$env:USERPROFILE/go/bin;" + $env:PATH
+go install github.com/wailsapp/wails/v2/cmd/wails@v2.17.1
+Push-Location frontend
+npm.cmd ci
+npm.cmd run build
+Pop-Location
+```
+
+先生成前端资源，是因为 Go 通过 `go:embed` 嵌入 `frontend/dist`；该目录不入库，新克隆后直接运行 `go test ./...` 会缺少资源。
+
+```powershell
+# 开发窗口
+./dev.ps1
+
+# 正式构建（先正常保存并退出运行中的 TwinLog）
+./build.ps1
+```
+
+正式产物为 `build/bin/TwinLog.exe`。前端依赖以 `frontend/package-lock.json` 为准，使用 `npm.cmd ci` 安装；Go 和 Wails 依赖以 `go.mod`、`go.sum` 为准。官方 Go 源不通时，可对当前终端设置 `$env:GOPROXY = "https://goproxy.cn,direct"`。离线使用需提前准备 WebView2、ADB 及驱动。
+
+## 自动验证
+
+在首次准备完成、Go 已加入当前终端 PATH 后运行：
+
+```powershell
+go test ./...
+go vet ./...
+Push-Location frontend
+npm.cmd run build
+npm.cmd run test:capture
+npm.cmd run test:scroll
+Pop-Location
+```
+
+界面测试在 Windows 使用已安装的 Microsoft Edge 和模拟 Wails 桥接，不连接设备。Go 实机测试默认跳过；需要手动设置 `TWINLOG_TEST_SERIAL`、`TWINLOG_TEST_ADB`（adb 路径）和 `TWINLOG_TEST_PACKAGE`（设备上的共享 UID 应用包名）后才会运行。实机测试只读查询进程和 logcat，不打开串口、不清空日志或重启应用。
 
 ## 代码入口
 
@@ -49,3 +85,11 @@ MCU 行首格式：[2026-11-17 11:56:10.745] 。空行同样有时间戳，跨�
 - docs/需求方案.md：确认后的最小需求。
 
 本项目仅在本地保存日志，不自动上传。
+
+## 参与贡献
+
+欢迎通过 GitHub Issues 反馈问题或提交 Pull Request。请参考 [贡献指南](CONTRIBUTING.md) 和 [开发约定](AGENTS.md)。反馈时请使用脱敏的最小日志片段，避免上传设备序列号、账号信息或业务数据。
+
+## 开源协议
+
+本项目采用 [MIT License](LICENSE)，允许使用、修改和商业分发，分发时须保留版权声明及许可文本。第三方依赖仍遵循各自的许可证。
