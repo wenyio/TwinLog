@@ -1,0 +1,10 @@
+.tools/
+.tasks/
+node_modules/
+frontend/dist/
+frontend/wailsjs/
+build/bin/
+*.test.exe
+*.log
+*.tsbuildinfo
+frontend/package.json.md5
