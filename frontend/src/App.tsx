@@ -1,4 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useRef } from "react";
+import LogSplit from "./LogSplit";
 import {
   Activity,
   Usb,
@@ -11,12 +12,15 @@ import {
   Pause,
   Trash2,
   Settings2,
-  ChevronDown,
-  ChevronUp,
   FileText,
   Check,
   AlertCircle,
-  ArrowUpRight,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
+  Columns2,
+  Rows2,
   Radio,
 } from "lucide-react";
 import {
@@ -45,24 +49,41 @@ const size = (n: number) =>
     : (n / 1024).toFixed(1) + " KB";
 const time = (s: string) =>
   s ? new Date(s).toLocaleString("zh-CN", { hour12: false }) : "";
+type LogLayout = "columns" | "rows" | "mcu" | "android";
+function loadLayout() {
+  try {
+    const v = JSON.parse(localStorage.getItem("twinlog.layout") || "{}");
+    return {
+      left: v.left !== false,
+      right: v.right !== false,
+      mode: (["columns", "rows", "mcu", "android"].includes(v.mode)
+        ? v.mode
+        : "columns") as LogLayout,
+    };
+  } catch {
+    return { left: true, right: true, mode: "columns" as LogLayout };
+  }
+}
 const cut = (s: string) => s.slice(-300000).split("\n").slice(-2000).join("\n");
 function LogPane({
   source,
   text,
   clear,
+  visible,
 }: {
   source: string;
   text: string;
   clear: () => void;
+  visible: boolean;
 }) {
   const [paused, setPaused] = useState(false);
   const [snapshot, setSnapshot] = useState("");
   const pre = useRef<HTMLPreElement>(null);
   const displayedText = paused ? snapshot : text;
   useLayoutEffect(() => {
-    if (!paused && pre.current)
+    if (visible && !paused && pre.current)
       pre.current.scrollTop = pre.current.scrollHeight;
-  }, [text, paused]);
+  }, [text, paused, visible]);
   const togglePaused = () => {
     if (!paused) setSnapshot(text);
     setPaused((value) => !value);
@@ -73,24 +94,27 @@ function LogPane({
     if (pre.current) pre.current.scrollTop = 0;
   };
   return (
-    <section className="log-pane">
+    <section className="log-pane" hidden={!visible}>
       <header>
         <span className={"source-dot " + source} />
         <strong>{source === "mcu" ? "MCU 串口" : "Android Logcat"}</strong>
-        <span className="mono sub">
-          {source === "mcu" ? "接收时间戳" : "应用日志"}
-        </span>
         <div className="grow" />
         <button
           className={"icon " + (paused ? "toggled" : "")}
-          title={paused ? "继续自动滚动，显示最新日志" : "暂停自动滚动，固定当前预览"}
+          title={
+            paused ? "继续自动滚动，显示最新日志" : "暂停自动滚动，固定当前预览"
+          }
           aria-label={paused ? "继续自动滚动" : "暂停自动滚动"}
           aria-pressed={paused}
           onClick={togglePaused}
         >
           {paused ? <Play size={14} /> : <Pause size={14} />}
         </button>
-        <button className="icon" title="清空预览，不影响保存" onClick={clearPreview}>
+        <button
+          className="icon"
+          title="清空预览，不影响保存"
+          onClick={clearPreview}
+        >
           <Trash2 size={14} />
         </button>
       </header>
@@ -98,19 +122,24 @@ function LogPane({
         {displayedText || (
           <span className="log-empty">
             {source === "mcu" ? "等待串口数据…" : "等待 Android 日志…"}
-            <br />
-            <small>连接后持续保存，预览仅显示最近 2000 行</small>
           </span>
         )}
       </pre>
-      <footer>
-        <span>{paused ? "预览已暂停 · 后台继续保存" : "自动滚动"}</span>
-        <span>清屏仅影响预览</span>
-      </footer>
     </section>
   );
 }
 export default function App() {
+  const [operationsTab, setOperationsTab] = useState<"capture" | "connection">(
+    "capture",
+  );
+  const [layout, setLayout] = useState(loadLayout);
+  useEffect(() => {
+    try {
+      localStorage.setItem("twinlog.layout", JSON.stringify(layout));
+    } catch {
+      /* Preferences are optional. */
+    }
+  }, [layout]);
   const [config, setConfig] = useState<Config>(defaults),
     [state, setState] = useState<State>(empty),
     [ports, setPorts] = useState<Port[]>([]),
@@ -121,8 +150,7 @@ export default function App() {
     [view, setView] = useState<RecordItem | null>(null),
     [title, setTitle] = useState(""),
     [notes, setNotes] = useState(""),
-    [advanced, setAdvanced] = useState(false),
-    [connectionOpen, setConnectionOpen] = useState(true);
+    [advanced, setAdvanced] = useState(false);
   const [busy, setBusy] = useState(""),
     [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
@@ -142,6 +170,7 @@ export default function App() {
   };
   const run = async (label: string, fn: () => Promise<void>) => {
     setBusy(label);
+    setNotice("");
     setError("");
     try {
       await fn();
@@ -249,6 +278,7 @@ export default function App() {
   const patch = (v: Partial<Config>) => setConfig((c) => ({ ...c, ...v }));
   const changeView = async (r: RecordItem | null) => {
     await flush();
+    setOperationsTab("capture");
     viewRef.current = r;
     setView(r);
     setTitle(r?.title || "");
@@ -274,24 +304,22 @@ export default function App() {
       ]);
       setPorts(p || []);
       setDevices(d || []);
-      setNotice("设备列表已更新");
     });
   const connect = () =>
     run("连接设备", async () => {
       await flush();
       await api.Connect(config);
       setState(await api.GetState());
-      setConnectionOpen(false);
+      setOperationsTab("capture");
       setIncludeFull(false);
-      setNotice("两路已连接，完整日志持续保存中");
     });
   const disconnect = () =>
     run("断开连接", async () => {
       await flush();
       await api.Disconnect();
+      setOperationsTab("connection");
       setState(await api.GetState());
       await refreshRecords();
-      setNotice("已断开，日志已保存");
     });
   const start = () =>
     run("开始抓取", async () => {
@@ -304,7 +332,6 @@ export default function App() {
       setState(await api.GetState());
       await refreshRecords();
       setSaved(true);
-      setNotice("正在抓取，备注会自动保存");
     });
   const stop = () =>
     run("停止抓取", async () => {
@@ -315,7 +342,6 @@ export default function App() {
       setNotes(r.notes);
       setState(await api.GetState());
       await refreshRecords();
-      setNotice("抓取已保存，完整日志继续记录");
     });
   const exportRecords = () =>
     run("正在导出", async () => {
@@ -328,20 +354,18 @@ export default function App() {
     history = !!view && !live;
   return (
     <div className="app-shell">
-      <aside className="sidebar">
+      <aside className="sidebar" hidden={!layout.left}>
         <div className="brand">
           <div className="brand-mark">
             <Activity size={25} />
           </div>
           <div>
             <b>TwinLog</b>
-            <span>双路日志助手</span>
           </div>
           <span className="version">v0.1.2</span>
         </div>
         <div className="sidebar-top">
           <div>
-            <span className="eyebrow">WORKSPACE</span>
             <h2>
               抓取记录 <span>{records.length}</span>
             </h2>
@@ -368,11 +392,6 @@ export default function App() {
             <div className="history-empty">
               <FileText size={30} />
               <b>还没有抓取记录</b>
-              <span>
-                连接设备后，创建第一条抓取。
-                <br />
-                日志与备注会自动保存在本地。
-              </span>
             </div>
           ) : (
             records.map((r) => (
@@ -416,7 +435,7 @@ export default function App() {
           )}
         </div>
         <div className="export-panel">
-          <label>
+          <label title={state.connected ? "附带完整日志需先断开连接" : ""}>
             <input
               type="checkbox"
               checked={includeFull}
@@ -425,7 +444,7 @@ export default function App() {
             />
             附带完整日志
           </label>
-          {state.connected && <small>附带完整日志需先断开连接</small>}
+
           <button
             className="secondary export"
             disabled={
@@ -442,76 +461,338 @@ export default function App() {
               : "导出所选" + (selected.size ? " · " + selected.size : "")}
           </button>
         </div>
-        <div className="sidebar-bottom">
-          <span className="source-dot mcu" />
-          本地保存 · 无数据库
-        </div>
       </aside>
       <main>
-        <header className="topbar">
-          <div>
-            <span className="eyebrow">CAPTURE WORKSPACE</span>
-            <h1>
-              让每次复现都有记录
-              <span
-                className={
-                  "connection-badge " + (state.connected ? "online" : "")
-                }
-              >
-                <i />
-                {state.connected ? "持续采集中" : "未连接"}
-              </span>
-            </h1>
-          </div>
+        <header className="workspace-toolbar">
           <button
-            className="secondary"
+            className="icon"
+            title={layout.left ? "收起记录栏" : "展开记录栏"}
+            aria-label={layout.left ? "收起记录栏" : "展开记录栏"}
+            aria-expanded={layout.left}
+            onClick={() => setLayout((v) => ({ ...v, left: !v.left }))}
+          >
+            {layout.left ? (
+              <PanelLeftClose size={18} />
+            ) : (
+              <PanelLeftOpen size={18} />
+            )}
+          </button>
+          <div className="layout-switch" role="group" aria-label="日志布局">
+            {(
+              [
+                ["columns", "左右", Columns2],
+                ["rows", "上下", Rows2],
+                ["mcu", "MCU", null],
+                ["android", "Android", null],
+              ] as const
+            ).map(([mode, label, Icon]) => (
+              <button
+                key={mode}
+                aria-pressed={layout.mode === mode}
+                className={layout.mode === mode ? "active" : ""}
+                onClick={() => setLayout((v) => ({ ...v, mode }))}
+              >
+                {Icon && <Icon size={14} />}
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="grow" />
+          {state.capturing && (
+            <>
+              <span className="capture-title" title={state.activeRecord?.title}>
+                {state.activeRecord?.title}
+              </span>
+              <span className="recording">
+                <i />
+                抓取中
+              </span>
+              {!layout.right && (
+                <button
+                  className="stop compact"
+                  disabled={locked}
+                  onClick={stop}
+                >
+                  <Square size={13} />
+                  停止并保存
+                </button>
+              )}
+            </>
+          )}
+          <button
+            className="icon"
+            title="打开日志目录"
+            aria-label="打开日志目录"
             disabled={!state.sessionDir || locked}
             onClick={() =>
               run("打开目录", async () => api.OpenFolder(state.sessionDir))
             }
           >
-            <FolderOpen size={16} />
-            打开日志目录
-            <ArrowUpRight size={13} />
+            <FolderOpen size={17} />
           </button>
-        </header>
-        {!desktop() && (
-          <div className="preview-banner">
-            <AlertCircle size={16} />
-            浏览器界面预览 · 请运行 TwinLog 桌面程序连接串口和 Android 设备。
-          </div>
-        )}
-        {(error || state.error) && (
-          <div className="error-banner">
-            <AlertCircle size={17} />
-            <span>{error || state.error}</span>
-            <button className="icon" onClick={() => setError("")}>
-              ×
-            </button>
-          </div>
-        )}
-        <section className="connection-card">
           <button
-            className="connection-heading"
-            onClick={() => setConnectionOpen(!connectionOpen)}
+            className="icon"
+            title={layout.right ? "收起操作栏" : "展开操作栏"}
+            aria-label={layout.right ? "收起操作栏" : "展开操作栏"}
+            aria-expanded={layout.right}
+            onClick={() => setLayout((v) => ({ ...v, right: !v.right }))}
           >
-            <div className="section-icon">
-              <Usb size={17} />
-            </div>
-            <strong>设备连接</strong>
-            <span>
-              {state.connected
-                ? config.serialPort + " + " + config.androidSerial
-                : "一个串口，一台 Android 设备"}
-            </span>
-            <div className="grow" />
-            {connectionOpen ? (
-              <ChevronUp size={16} />
+            {layout.right ? (
+              <PanelRightClose size={18} />
             ) : (
-              <ChevronDown size={16} />
+              <PanelRightOpen size={18} />
             )}
           </button>
-          {connectionOpen && (
+        </header>
+        {(error || state.error) && (
+          <div className="error-banner">
+            <AlertCircle size={16} />
+            <span>{error || state.error}</span>
+            {error && (
+              <button
+                className="icon"
+                aria-label="关闭提示"
+                onClick={() => setError("")}
+              >
+                ×
+              </button>
+            )}
+          </div>
+        )}
+        {state.filterWarning && (
+          <div className="preview-banner" title={state.filterWarning}>
+            <AlertCircle size={16} />
+            <span>
+              应用过滤暂不可用，正在重试；MCU 和完整 Android 日志继续保存。
+            </span>
+          </div>
+        )}
+        <LogSplit mode={layout.mode}>
+          <LogPane
+            source="mcu"
+            text={mcu}
+            clear={() => setMcu("")}
+            visible={layout.mode !== "android"}
+          />
+          <LogPane
+            source="android"
+            text={android}
+            clear={() => setAndroid("")}
+            visible={layout.mode !== "mcu"}
+          />
+        </LogSplit>
+        <footer className="statusbar">
+          <span>
+            <i className={state.connected ? "online-dot" : "offline-dot"} />
+            {busy || (state.connected ? "已连接 · 全量记录中" : "未连接")}
+          </span>
+          <span className="live-label">实时日志</span>
+          <span className="status-notice" title={notice}>
+            {notice}
+          </span>
+          <div className="grow" />
+          <span className="mono">
+            MCU {size(state.mcuBytes)}
+            <span className="divider">/</span>Android {size(state.androidBytes)}
+          </span>
+        </footer>
+      </main>
+      <aside className="operations" hidden={!layout.right}>
+        <header className="operations-heading">
+          <div className="operations-tabs" role="tablist" aria-label="操作面板">
+            {(["capture", "connection"] as const).map((tab) => (
+              <button
+                key={tab}
+                id={"operations-tab-" + tab}
+                role="tab"
+                aria-selected={operationsTab === tab}
+                aria-controls={"operations-panel-" + tab}
+                tabIndex={operationsTab === tab ? 0 : -1}
+                onClick={() => setOperationsTab(tab)}
+                onKeyDown={(event) => {
+                  if (
+                    !["ArrowLeft", "ArrowRight", "Home", "End"].includes(
+                      event.key,
+                    )
+                  )
+                    return;
+                  event.preventDefault();
+                  const next =
+                    event.key === "Home"
+                      ? "capture"
+                      : event.key === "End"
+                        ? "connection"
+                        : tab === "capture"
+                          ? "connection"
+                          : "capture";
+                  setOperationsTab(next);
+                  document.getElementById("operations-tab-" + next)?.focus();
+                }}
+              >
+                {tab === "capture" ? <FileText size={15} /> : <Usb size={15} />}
+                {tab === "capture" ? "抓取" : "设备连接"}
+                {tab === "connection" && (
+                  <i
+                    className={state.connected ? "online-dot" : "offline-dot"}
+                  />
+                )}
+              </button>
+            ))}
+          </div>
+        </header>
+        <div
+          className="operations-body"
+          role="tabpanel"
+          id="operations-panel-capture"
+          aria-labelledby="operations-tab-capture"
+          hidden={operationsTab !== "capture"}
+        >
+          <section className="capture-card">
+            <div className="capture-heading">
+              <span className="eyebrow">
+                {history ? "历史记录" : "新建抓取"}
+              </span>
+              {history && (
+                <button
+                  className="text-button"
+                  onClick={() =>
+                    run("打开目录", async () => api.OpenFolder(view.path))
+                  }
+                >
+                  <FolderOpen size={14} />
+                  打开记录日志
+                </button>
+              )}
+            </div>
+            <div className="capture-controls">
+              <input
+                className="title-input"
+                placeholder="标题"
+                aria-label="抓取标题"
+                value={title}
+                disabled={state.capturing || history || locked}
+                onChange={(e) => setTitle(e.target.value)}
+              />
+              {state.capturing ? (
+                <button className="stop" disabled={locked} onClick={stop}>
+                  <Square size={15} fill="currentColor" />
+                  停止抓取
+                </button>
+              ) : (
+                <button
+                  className="primary start"
+                  disabled={
+                    !state.connected || !title.trim() || history || locked
+                  }
+                  onClick={start}
+                >
+                  <Play size={16} fill="currentColor" />
+                  开始抓取
+                </button>
+              )}
+            </div>
+            <div className="app-select">
+              <label htmlFor="package">Android 应用</label>
+              <input
+                id="package"
+                list="packages"
+                placeholder="全部应用 / 包名"
+                value={history ? view.package : config.package}
+                disabled={state.capturing || history || locked}
+                onChange={(e) => patch({ package: e.target.value })}
+                onBlur={() => {
+                  if (
+                    state.connected &&
+                    !state.capturing &&
+                    !history &&
+                    config.package !== state.config.package
+                  )
+                    run("切换应用", async () => {
+                      await api.SetPackage(config.package);
+                      setAndroid("");
+                    });
+                }}
+              />
+              <datalist id="packages">
+                {packages.map((p) => (
+                  <option key={p} value={p} />
+                ))}
+              </datalist>
+              <button
+                className="text-button"
+                title="加载应用"
+                aria-label="加载应用"
+                disabled={
+                  !config.androidSerial || state.capturing || history || locked
+                }
+                onClick={() =>
+                  run("加载应用", async () => {
+                    setPackages(
+                      await api.ListPackages(
+                        config.adbPath,
+                        config.androidSerial,
+                      ),
+                    );
+                  })
+                }
+              >
+                <RefreshCw size={13} />
+                加载应用
+              </button>
+              {state.filterStatus && (
+                <span className="filter-status" title={state.filterWarning}>
+                  {state.filterStatus}
+                </span>
+              )}
+            </div>
+          </section>
+          <section className="notes-card">
+            <header>
+              <FileText size={16} />
+              <strong>备注</strong>
+
+              <div className="grow" />
+              {(view || state.capturing) && (
+                <small className={saved ? "save-ok" : "save-pending"}>
+                  {saved ? (
+                    <>
+                      <Check size={13} />
+                      已保存
+                    </>
+                  ) : (
+                    "保存中…"
+                  )}
+                </small>
+              )}
+            </header>
+            <textarea
+              value={notes}
+              placeholder="输入备注"
+              onChange={(e) => updateNotes(e.target.value)}
+              onBlur={() => flush().catch((e) => setError(String(e)))}
+            />
+          </section>
+        </div>
+        <div
+          className="operations-body"
+          role="tabpanel"
+          id="operations-panel-connection"
+          aria-labelledby="operations-tab-connection"
+          hidden={operationsTab !== "connection"}
+        >
+          <section className="connection-card">
+            <div className="connection-heading">
+              <div className="section-icon">
+                <Usb size={17} />
+              </div>
+              <strong>设备连接</strong>
+              <span>
+                {state.connected
+                  ? config.serialPort + " + " + config.androidSerial
+                  : "未连接"}
+              </span>
+              <div className="grow" />
+            </div>
             <div className="connection-body">
               <div className="device-grid">
                 <label>
@@ -614,7 +895,7 @@ export default function App() {
                     ? "连接中…"
                     : state.connected
                       ? "断开连接"
-                      : "连接并持续采集"}
+                      : "连接设备"}
                 </button>
               </div>
               {advanced && (
@@ -700,175 +981,9 @@ export default function App() {
                 </div>
               )}
             </div>
-          )}
-        </section>
-        <section className="capture-card">
-          <div className="capture-heading">
-            <span className="eyebrow">
-              {history ? "SAVED CAPTURE" : "CURRENT CAPTURE"}
-            </span>
-            {history && (
-              <button
-                className="text-button"
-                onClick={() =>
-                  run("打开目录", async () => api.OpenFolder(view.path))
-                }
-              >
-                <FolderOpen size={14} />
-                打开记录日志
-              </button>
-            )}
-            {live && (
-              <span className="recording">
-                <i />
-                正在抓取
-              </span>
-            )}
-          </div>
-          <div className="capture-controls">
-            <input
-              className="title-input"
-              placeholder="为这次抓取起个标题…"
-              value={title}
-              disabled={state.capturing || history || locked}
-              onChange={(e) => setTitle(e.target.value)}
-            />
-            {state.capturing ? (
-              <button className="stop" disabled={locked} onClick={stop}>
-                <Square size={15} fill="currentColor" />
-                Stop · 保存抓取
-              </button>
-            ) : (
-              <button
-                className="primary start"
-                disabled={
-                  !state.connected || !title.trim() || history || locked
-                }
-                onClick={start}
-              >
-                <Play size={16} fill="currentColor" />
-                Start · 开始抓取
-              </button>
-            )}
-          </div>
-          <div className="app-select">
-            <label htmlFor="package">Android 应用</label>
-            <input
-              id="package"
-              list="packages"
-              placeholder="全部应用（或输入包名）"
-              value={history ? view.package : config.package}
-              disabled={state.capturing || history || locked}
-              onChange={(e) => patch({ package: e.target.value })}
-              onBlur={() => {
-                if (
-                  state.connected &&
-                  !state.capturing &&
-                  !history &&
-                  config.package !== state.config.package
-                )
-                  run("切换应用", async () => {
-                    await api.SetPackage(config.package);
-                    setAndroid("");
-                  });
-              }}
-            />
-            <datalist id="packages">
-              {packages.map((p) => (
-                <option key={p} value={p} />
-              ))}
-            </datalist>
-            <button
-              className="text-button"
-              disabled={
-                !config.androidSerial || state.capturing || history || locked
-              }
-              onClick={() =>
-                run("加载应用", async () => {
-                  setPackages(
-                    await api.ListPackages(
-                      config.adbPath,
-                      config.androidSerial,
-                    ),
-                  );
-                  setNotice("应用包名已加载，可输入搜索");
-                })
-              }
-            >
-              <RefreshCw size={13} />
-              加载应用
-            </button>
-            <span>留空为全部 · full 始终保存全量</span>
-            {state.filterStatus && (
-              <span className="filter-status" title={state.filterWarning}>
-                {state.filterStatus}
-              </span>
-            )}
-          </div>
-        </section>
-        {state.filterWarning && (
-          <div className="preview-banner" title={state.filterWarning}>
-            <AlertCircle size={16} />
-            <span>
-              应用过滤暂不可用，正在重试；MCU 和完整 Android 日志继续保存。
-            </span>
-          </div>
-        )}
-        <div className="logs-grid">
-          <LogPane source="mcu" text={mcu} clear={() => setMcu("")} />
-          <LogPane
-            source="android"
-            text={android}
-            clear={() => setAndroid("")}
-          />
+          </section>
         </div>
-        {history && (
-          <div className="history-preview-hint">
-            上方是当前连接的实时预览。历史日志请点击“打开记录日志”查看。
-          </div>
-        )}
-        <section className="notes-card">
-          <header>
-            <FileText size={16} />
-            <strong>备注</strong>
-            <span>随时记录，停止后也能补充</span>
-            <div className="grow" />
-            {(view || state.capturing) && (
-              <small className={saved ? "save-ok" : "save-pending"}>
-                {saved ? (
-                  <>
-                    <Check size={13} />
-                    已自动保存
-                  </>
-                ) : (
-                  "保存中…"
-                )}
-              </small>
-            )}
-          </header>
-          <textarea
-            value={notes}
-            placeholder="输入备注，例如复现步骤、测试员反馈…"
-            onChange={(e) => updateNotes(e.target.value)}
-            onBlur={() => flush().catch((e) => setError(String(e)))}
-          />
-        </section>
-        <footer className="statusbar">
-          <span>
-            <i className={state.connected ? "online-dot" : "offline-dot"} />
-            {busy ||
-              notice ||
-              (state.connected
-                ? "完整日志持续保存中"
-                : "准备就绪 · 连接设备开始记录")}
-          </span>
-          <div className="grow" />
-          <span className="mono">
-            MCU {size(state.mcuBytes)}
-            <span className="divider">/</span>Android {size(state.androidBytes)}
-          </span>
-        </footer>
-      </main>
+      </aside>
     </div>
   );
 }
