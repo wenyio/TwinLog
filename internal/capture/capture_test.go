@@ -131,6 +131,41 @@ func TestFullCaptureNotesExport(t *testing.T) {
 		t.Fatal("export into source should fail")
 	}
 }
+
+func TestCaptureTitleCanBeBlankAndUpdated(t *testing.T) {
+	m, root := synthetic(t)
+	t.Cleanup(func() { _ = errors.Join(m.mcu.close(), m.android.close(), m.capMCU.close(), m.capAndroid.close()) })
+	r, err := m.StartCapture(" \t\n", "initial notes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	start, err := time.Parse(time.RFC3339Nano, r.StartedAt)
+	if err != nil || r.Title != "" || filepath.Base(r.Path) != formatDirTime(start) {
+		t.Fatalf("unexpected untitled capture: %+v, %v", r, err)
+	}
+	if err = m.SaveTitle(r.Path, "  抓取中修改  "); err != nil {
+		t.Fatal(err)
+	}
+	if state := m.State(); state.ActiveRecord.Title != "抓取中修改" || state.ActiveRecord.Path != r.Path {
+		t.Fatalf("active record not updated: %+v", state.ActiveRecord)
+	}
+	if err = m.SaveNotes(r.Path, "updated notes"); err != nil {
+		t.Fatal(err)
+	}
+	stopped, err := m.StopCapture()
+	if err != nil || stopped.Title != "抓取中修改" || stopped.Notes != "updated notes" || stopped.EndedAt == "" {
+		t.Fatalf("stop did not retain edits: %+v, %v", stopped, err)
+	}
+	if err = m.SaveTitle(r.Path, " \t "); err != nil {
+		t.Fatal(err)
+	}
+	records, err := NewManager(nil).ListRecords(root)
+	if err != nil || len(records) != 1 || records[0].Title != "" || records[0].Notes != stopped.Notes ||
+		records[0].Path != r.Path || records[0].EndedAt != stopped.EndedAt {
+		t.Fatalf("historical edit did not preserve record: %+v, %v", records, err)
+	}
+}
+
 func TestCaptureWithoutFullLogs(t *testing.T) {
 	m, root := synthetic(t)
 	t.Cleanup(func() { _ = errors.Join(m.mcu.close(), m.android.close()) })

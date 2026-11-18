@@ -53,6 +53,8 @@ const size = (n: number) =>
     : (n / 1024).toFixed(1) + " KB";
 const time = (s: string) =>
   s ? new Date(s).toLocaleString("zh-CN", { hour12: false }) : "";
+const displayTitle = (title?: string) => title?.trim() || "未命名";
+type RecordFields = Pick<RecordItem, "title" | "notes">;
 type LogLayout = "columns" | "rows" | "mcu" | "android";
 function loadLayout() {
   try {
@@ -164,13 +166,13 @@ export default function App() {
     [includeFull, setIncludeFull] = useState(false),
     [mcu, setMcu] = useState(""),
     [android, setAndroid] = useState(""),
-    [saved, setSaved] = useState(true);
-  const pending = useRef<{ path: string; text: string } | null>(null),
+    [saveStatus, setSaveStatus] = useState<"saved" | "pending" | "failed">("saved");
+  const pending = useRef<({ path: string } & Partial<RecordFields>) | null>(null),
     draft = useRef({ title: "", notes: "" }),
     titleInput = useRef<HTMLInputElement>(null),
     focusTitle = useRef(false),
     selectAll = useRef<HTMLInputElement>(null),
-    saving = useRef<Promise<void>>(Promise.resolve()),
+    saving = useRef<Promise<void> | null>(null),
     timer = useRef<ReturnType<typeof setTimeout> | null>(null),
     viewRef = useRef<RecordItem | null>(null),
     recordsRequest = useRef(0),
@@ -194,7 +196,10 @@ export default function App() {
     if (desktop() && root) {
       const items = (await api.ListRecords(root)) || [];
       if (!isCurrent() || request !== recordsRequest.current) return;
-      setRecords(items);
+      const current = viewRef.current;
+      setRecords(items.map((r) => r.path === current?.path && r.path === pending.current?.path
+        ? { ...r, title: current.title, notes: current.notes }
+        : r));
       setSelected((s) => new Set([...s].filter((path) =>
         items.some((r) => r.path === path && r.path !== stateRef.current.activeRecord?.path),
       )));
@@ -212,45 +217,46 @@ export default function App() {
       setBusy("");
     }
   };
-  const flush = async () => {
+  const flush = () => {
     if (timer.current) clearTimeout(timer.current);
-    const p = pending.current;
-    if (p) {
-      pending.current = null;
-      const task = saving.current
-        .catch(() => {})
-        .then(() => api.SaveNotes(p.path, p.text));
-      saving.current = task;
-      try {
-        await task;
-        setSaved(!pending.current);
-      } catch (e) {
-        if (!pending.current) pending.current = p;
-        setSaved(false);
-        throw e;
+    timer.current = null;
+    if (saving.current) return saving.current;
+    if (!pending.current) return Promise.resolve();
+    setSaveStatus("pending");
+    saving.current = (async () => {
+      // Keep the snapshot available for retry until both writes succeed.
+      while (pending.current) {
+        const p = pending.current;
+        if (p.title !== undefined) await api.SaveTitle(p.path, p.title);
+        if (p.notes !== undefined) await api.SaveNotes(p.path, p.notes);
+        if (pending.current === p) pending.current = null;
       }
-    } else {
-      await saving.current;
-    }
+      setSaveStatus("saved");
+    })()
+      .catch((e) => {
+        setSaveStatus("failed");
+        throw e;
+      })
+      .finally(() => { saving.current = null; });
+    return saving.current;
   };
   flushRef.current = flush;
-  const updateNotes = (text: string) => {
-    setNotes(text);
-    if (!viewRef.current) {
-      draft.current.notes = text;
+  const updateField = (field: keyof RecordFields, text: string) => {
+    if (field === "title") setTitle(text);
+    else setNotes(text);
+    const current = viewRef.current;
+    if (!current) {
+      draft.current[field] = text;
       return;
     }
-    const path = viewRef.current?.path || stateRef.current.activeRecord?.path;
-    if (!path) return;
+    const { path } = current;
     setRecords((rs) =>
-      rs.map((r) => (r.path === path ? { ...r, notes: text } : r)),
+      rs.map((r) => (r.path === path ? { ...r, [field]: text } : r)),
     );
-    if (viewRef.current?.path === path) {
-      viewRef.current = { ...viewRef.current, notes: text };
-      setView(viewRef.current);
-    }
-    pending.current = { path, text };
-    setSaved(false);
+    viewRef.current = { ...current, [field]: text };
+    setView(viewRef.current);
+    pending.current = { ...pending.current, path, [field]: text };
+    setSaveStatus("pending");
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => {
       flush().catch((e) => setError(String(e)));
@@ -326,6 +332,7 @@ export default function App() {
   };
   const changeView = async (r: RecordItem) => {
     await flush();
+    if (viewRef.current?.path === r.path) r = viewRef.current;
     const logs = await api.ReadRecordLogs(r.path);
     setRecordLogs(logs);
     setOperationsTab("capture");
@@ -334,7 +341,6 @@ export default function App() {
     setView(r);
     setTitle(r.title);
     setNotes(r.notes);
-    setSaved(true);
   };
   const prepareCapture = () =>
     run("新建抓取", async () => {
@@ -344,7 +350,6 @@ export default function App() {
       setRecordLogs(null);
       setTitle(draft.current.title);
       setNotes(draft.current.notes);
-      setSaved(true);
       setLayout((v) => ({ ...v, right: true }));
       setOperationsTab(stateRef.current.connected ? "capture" : "connection");
       focusTitle.current = stateRef.current.connected;
@@ -396,7 +401,6 @@ export default function App() {
         setRecordLogs(null);
         setTitle(draft.current.title);
         setNotes(draft.current.notes);
-        setSaved(true);
       }
       setOperationsTab("capture");
       focusTitle.current = true;
@@ -423,7 +427,6 @@ export default function App() {
       setTitle(r.title);
       setState(await api.GetState());
       await refreshRecords();
-      setSaved(true);
     });
   const stop = () =>
     run("停止抓取", async () => {
@@ -432,6 +435,7 @@ export default function App() {
       viewRef.current = r;
       setView(r);
       setRecordLogs(null);
+      setTitle(r.title);
       setNotes(r.notes);
       setState(await api.GetState());
       await refreshRecords();
@@ -455,7 +459,6 @@ export default function App() {
         setRecordLogs(null);
         setTitle(draft.current.title);
         setNotes(draft.current.notes);
-        setSaved(true);
       }
       setSelected(new Set());
       setNotice("已将 " + paths.length + " 条记录移入回收目录：" + trash);
@@ -469,6 +472,7 @@ export default function App() {
   const locked = !!busy,
     live = state.capturing && view?.path === state.activeRecord?.path,
     history = !!view && !live;
+  const activeTitle = displayTitle(live ? view?.title : state.activeRecord?.title);
   const historyHint = !recordLogs
     ? "日志未加载，可重新点击记录重试"
     : recordLogs.mcu.truncated || recordLogs.android.truncated
@@ -555,7 +559,7 @@ export default function App() {
               >
                 <input
                   type="checkbox"
-                  aria-label={"选择 " + r.title}
+                  aria-label={"选择 " + displayTitle(r.title)}
                   checked={selected.has(r.path)}
                   disabled={locked || r.path === state.activeRecord?.path}
                   onChange={(e) =>
@@ -568,12 +572,12 @@ export default function App() {
                   }
                 />
                 <button
-                  title="查看该记录的日志和备注"
+                  title="查看该记录"
                   aria-current={view?.path === r.path ? "page" : undefined}
                   onClick={() => run("打开记录", async () => changeView(r))}
                   disabled={state.capturing || locked}
                 >
-                  <strong>{r.title}</strong>
+                  <strong>{displayTitle(r.title)}</strong>
                   <span>{time(r.startedAt)}</span>
                   <small>
                     {r.interrupted
@@ -654,8 +658,8 @@ export default function App() {
           <div className="grow" />
           {state.capturing && (
             <>
-              <span className="capture-title" title={state.activeRecord?.title}>
-                {state.activeRecord?.title}
+              <span className="capture-title" title={activeTitle}>
+                {activeTitle}
               </span>
               <span className="recording">
                 <i />
@@ -729,7 +733,7 @@ export default function App() {
         {history && (
           <div className="history-banner">
             <span title={view.title}>
-              历史日志 · <strong>{view.title}</strong>
+              历史日志 · <strong>{displayTitle(view.title)}</strong>
             </span>
             <button disabled={locked} onClick={prepareCapture}>返回实时</button>
             {historyHint && <small>{historyHint}</small>}
@@ -849,14 +853,12 @@ export default function App() {
               <input
                 ref={titleInput}
                 className="title-input"
-                placeholder="标题"
+                placeholder={view ? "未命名" : "标题（选填）"}
                 aria-label="抓取标题"
                 value={title}
-                disabled={state.capturing || history || locked}
-                onChange={(e) => {
-                  setTitle(e.target.value);
-                  draft.current.title = e.target.value;
-                }}
+                disabled={locked}
+                onChange={(e) => updateField("title", e.target.value)}
+                onBlur={() => flush().catch((e) => setError(String(e)))}
               />
               {!state.capturing && history && (
                 <button
@@ -871,7 +873,7 @@ export default function App() {
               {!state.capturing && !history && (
                 <button
                   className="primary start"
-                  disabled={!state.connected || !title.trim() || locked}
+                  disabled={!state.connected || locked}
                   onClick={start}
                 >
                   <Play size={16} fill="currentColor" />
@@ -941,14 +943,14 @@ export default function App() {
 
               <div className="grow" />
               {(view || state.capturing) && (
-                <small className={saved ? "save-ok" : "save-pending"}>
-                  {saved ? (
+                <small className={saveStatus === "saved" ? "save-ok" : "save-pending"}>
+                  {saveStatus === "saved" ? (
                     <>
                       <Check size={13} />
                       已保存
                     </>
                   ) : (
-                    "保存中…"
+                    saveStatus === "failed" ? "未保存" : "保存中…"
                   )}
                 </small>
               )}
@@ -957,7 +959,7 @@ export default function App() {
               disabled={locked}
               value={notes}
               placeholder="输入备注"
-              onChange={(e) => updateNotes(e.target.value)}
+              onChange={(e) => updateField("notes", e.target.value)}
               onBlur={() => flush().catch((e) => setError(String(e)))}
             />
           </section>

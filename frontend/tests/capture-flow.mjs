@@ -79,9 +79,13 @@ try {
       start: 0,
       stop: 0,
       saves: [],
+      titleSaves: [],
+      closeAcks: [],
+      exported: [],
       failConnect: false,
       failStart: false,
       failSave: false,
+      failTitleSave: false,
       failRead: false,
       deleteApproved: false,
       deleted: [],
@@ -136,7 +140,7 @@ try {
             if (window.calls.failStart) throw Error("模拟开始失败");
             const r = {
               path: "test/new",
-              title,
+              title: title.trim(),
               notes,
               package: "",
               source: state.config.serialPort ? (state.config.androidSerial ? undefined : "mcu") : "android",
@@ -163,6 +167,20 @@ try {
             window.calls.saves.push({ path, notes });
             records.find((r) => r.path === path).notes = notes;
           },
+          SaveTitle: async (path, text) => {
+            if (window.calls.failTitleSave) throw Error("模拟标题保存失败");
+            if (window.holdTitleSave) await window.holdTitleSave;
+            const title = text.trim();
+            window.calls.titleSaves.push({ path, title });
+            records.find((r) => r.path === path).title = title;
+          },
+          ExportRecords: async (paths) => {
+            window.calls.exported.push(structuredClone(records.filter((r) => paths.includes(r.path))));
+            return "test/export.zip";
+          },
+          ConfirmClose: async (ok) => {
+            window.calls.closeAcks.push({ ok, title: records.find((r) => r.path === "test/new")?.title });
+          },
         },
       },
     };
@@ -177,6 +195,7 @@ try {
         fn({ source: "mcu", text: "MCU 保留日志\n" });
         fn({ source: "android", text: "Android 保留日志\n" });
       });
+    window.requestClose = () => emit("before-close");
   });
   await page.goto(url);
   const capture = page.getByRole("tabpanel", { name: "抓取", exact: true });
@@ -216,7 +235,7 @@ try {
   assert.ok(
     await capture
       .getByRole("button", { name: "开始抓取", exact: true })
-      .isDisabled(),
+      .isEnabled(),
   );
   await title.fill("未开始草稿");
   await notes.fill("草稿备注");
@@ -263,6 +282,7 @@ try {
     1,
   );
   assert.ok(await newCapture.isVisible());
+  await title.fill("更新历史标题");
   await notes.fill("历史补充备注");
   await page.getByRole("button", { name: "收起操作栏", exact: true }).click();
   await returnToLive.click();
@@ -272,6 +292,10 @@ try {
   assert.deepEqual(await page.evaluate(() => window.calls.saves), [
     { path: "test/old", notes: "历史补充备注" },
   ]);
+  assert.deepEqual(await page.evaluate(() => window.calls.titleSaves), [
+    { path: "test/old", title: "更新历史标题" },
+  ]);
+  assert.ok(await page.getByRole("button", { name: /更新历史标题/ }).isVisible());
   await page.evaluate(() => (window.calls.failStart = true));
   await capture.getByRole("button", { name: "开始抓取", exact: true }).click();
   await page.getByText("Error: 模拟开始失败", { exact: true }).waitFor();
@@ -283,18 +307,21 @@ try {
   );
   assert.equal(await notes.inputValue(), "草稿备注");
   await page.evaluate(() => (window.calls.failStart = false));
+  await title.fill("");
   await capture.getByRole("button", { name: "开始抓取", exact: true }).click();
   await capture.getByText("抓取中", { exact: true }).waitFor();
-  assert.ok(await title.isDisabled());
+  assert.ok(await title.isEnabled());
   assert.equal(await newCapture.count(), 0);
-  assert.ok(await page.getByRole("checkbox", { name: "选择 未开始草稿", exact: true }).isDisabled());
+  assert.ok(await page.getByRole("checkbox", { name: "选择 未命名", exact: true }).isDisabled());
   await page.getByRole("checkbox", { name: "全选记录", exact: true }).check();
   assert.equal(await page.locator('.history-row input:checked').count(), 1);
   assert.ok(await page.getByRole("button", { name: "删除所选", exact: true }).isDisabled());
   assert.equal(
     await page.locator(".history-row.active strong").textContent(),
-    "未开始草稿",
+    "未命名",
   );
+  await page.evaluate(() => { window.holdTitleSave = new Promise((resolve) => { window.releaseTitleSave = resolve; }); });
+  await title.fill("抓取中修改");
   await notes.fill("抓取中补充");
   const stop = page.locator(".workspace-toolbar").getByRole("button", { name: "停止并保存", exact: true });
   assert.ok(await stop.isVisible());
@@ -304,8 +331,11 @@ try {
   await page.getByRole("tab", { name: "抓取", exact: true }).click();
   await page.getByRole("button", { name: "收起操作栏", exact: true }).click();
   await stop.click();
+  assert.equal(await page.evaluate(() => window.calls.stop), 0, "stop must wait for the pending save");
+  await page.evaluate(() => window.releaseTitleSave());
   await page.getByRole("button", { name: "展开操作栏", exact: true }).click();
   await capture.getByText("已保存", { exact: true }).first().waitFor();
+  assert.equal(await title.inputValue(), "抓取中修改");
   assert.equal(await notes.inputValue(), "抓取中补充");
   await notes.fill("停止后补充");
   await newCapture.click();
@@ -329,10 +359,11 @@ try {
   // A failed note save must keep the selected record and allow a retry before switching.
   await page.locator(".history-row button").first().click();
   await page.evaluate(() => (window.calls.failSave = true));
+  await title.fill("补充标题");
   await notes.fill("失败后重试备注");
   await newCapture.click();
   await page.getByText("Error: 模拟备注失败", { exact: true }).waitFor();
-  assert.equal(await title.inputValue(), "未开始草稿");
+  assert.equal(await title.inputValue(), "补充标题");
   assert.equal(await notes.inputValue(), "失败后重试备注");
   await page.evaluate(() => (window.calls.failSave = false));
   await newCapture.click();
@@ -358,6 +389,25 @@ try {
   await page.locator(".history-row button").first().click();
   const selectAll = page.getByRole("checkbox", { name: "全选记录", exact: true });
   assert.equal(await selectAll.evaluate((el) => el.indeterminate), true);
+  const selectedRecord = page.getByRole("checkbox", { name: "选择 补充标题", exact: true });
+  await selectedRecord.check();
+  await title.fill("");
+  await page.getByRole("button", { name: /导出所选/ }).click();
+  await page.getByText("已导出：test/export.zip", { exact: true }).waitFor();
+  assert.equal(await page.evaluate(() => window.calls.exported[0].find((r) => r.path === "test/new").title), "");
+  await page.evaluate(() => (window.calls.failTitleSave = true));
+  await title.fill("退出前修改");
+  await page.evaluate(() => window.requestClose());
+  await page.waitForFunction(() => window.calls.closeAcks.at(-1)?.ok === false);
+  await capture.getByText("未保存", { exact: true }).waitFor();
+  assert.equal(await title.inputValue(), "退出前修改");
+  await page.evaluate(() => {
+    window.calls.failTitleSave = false;
+    window.requestClose();
+  });
+  await page.waitForFunction(() => window.calls.closeAcks.at(-1)?.ok === true);
+  assert.deepEqual(await page.evaluate(() => window.calls.closeAcks.at(-1)), { ok: true, title: "退出前修改" });
+  await selectAll.uncheck();
   await selectAll.check();
   assert.equal(await page.locator('.history-row input:checked').count(), 2);
   if (process.env.TWINLOG_SCREENSHOT) {
@@ -365,11 +415,11 @@ try {
   }
   await selectAll.uncheck();
   assert.equal(await page.locator('.history-row input:checked').count(), 0);
-  await page.getByRole("checkbox", { name: "选择 未开始草稿", exact: true }).check();
+  await page.getByRole("checkbox", { name: "选择 退出前修改", exact: true }).check();
   await page.getByRole("button", { name: "删除所选", exact: true }).click();
   await page.waitForFunction(() => !document.querySelector('.delete-records').disabled);
   assert.equal(await page.locator('.history-row').count(), 2);
-  assert.equal(await title.inputValue(), "未开始草稿");
+  assert.equal(await title.inputValue(), "退出前修改");
   await notes.fill("删除前备注");
   await page.evaluate(() => (window.calls.deleteApproved = true));
   await page.getByRole("button", { name: "删除所选", exact: true }).click();
@@ -445,7 +495,7 @@ try {
   assert.equal(await pane.count(), 2);
   assert.equal(await layouts.getByRole("button", { name: "上下", exact: true }).getAttribute("aria-pressed"), "true");
   console.log(
-    "PASS: capture flow, notes, history, deletion, single-source layout and explicit connection fallback",
+    "PASS: capture flow, title and notes, export and exit flush, history, deletion and single-source layout",
   );
 } finally {
   await browser?.close();

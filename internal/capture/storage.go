@@ -58,6 +58,13 @@ func safeName(s string) string {
 	}
 	return s
 }
+func captureDirName(startedAt time.Time, title string) string {
+	stamp := formatDirTime(startedAt)
+	if title = strings.TrimSpace(title); title != "" {
+		return stamp + "_" + safeName(title)
+	}
+	return stamp
+}
 func uniqueDir(root, name string) (string, error) {
 	for i := 0; i < 10000; i++ {
 		n := name
@@ -147,6 +154,27 @@ func (m *Manager) SaveNotes(path, notes string) error {
 	return nil
 }
 
+func (m *Manager) SaveTitle(path, title string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, err := loadRecord(path)
+	if err != nil {
+		return err
+	}
+	active := m.record != nil && m.record.Path == path
+	if active {
+		r = *m.record
+	}
+	r.Title = strings.TrimSpace(title)
+	if err := writeJSON(filepath.Join(path, "record.json"), r); err != nil {
+		return err
+	}
+	if active {
+		m.record.Title = r.Title
+	}
+	return nil
+}
+
 func fullLogsDisabled(session string) bool {
 	var meta struct {
 		Config struct {
@@ -178,6 +206,7 @@ func (m *Manager) Export(paths []string, destination string, includeFull bool) e
 	}
 	dirs := map[string]string{}
 	sessions := map[string]bool{}
+	usedPrefixes := map[string]bool{}
 	for _, path := range paths {
 		p, e := filepath.Abs(path)
 		if e != nil {
@@ -186,11 +215,24 @@ func (m *Manager) Export(paths []string, destination string, includeFull bool) e
 		if p == active {
 			return fmt.Errorf("请先停止当前抓取")
 		}
-		if _, e = loadRecord(p); e != nil {
+		if _, exists := dirs[p]; exists {
+			continue
+		}
+		r, e := loadRecord(p)
+		if e != nil {
 			return e
 		}
 		session := filepath.Dir(p)
-		prefix := filepath.Join(filepath.Base(session), filepath.Base(p))
+		name := filepath.Base(p)
+		if startedAt, e := time.Parse(time.RFC3339Nano, r.StartedAt); e == nil {
+			name = captureDirName(startedAt, r.Title)
+		}
+		base := filepath.Join(filepath.Base(session), name)
+		prefix := base
+		for i := 1; usedPrefixes[strings.ToLower(prefix)]; i++ {
+			prefix = fmt.Sprintf("%s_%d", base, i)
+		}
+		usedPrefixes[strings.ToLower(prefix)] = true
 		dirs[p] = prefix
 		sessions[session] = true
 	}
@@ -291,8 +333,8 @@ func (m *Manager) Export(paths []string, destination string, includeFull bool) e
 	}
 	return os.Rename(tmp, dest)
 }
-func nowISO() string { return time.Now().Format(time.RFC3339Nano) }
-func timeDir() string {
-	t := time.Now()
+func nowISO() string  { return time.Now().Format(time.RFC3339Nano) }
+func timeDir() string { return formatDirTime(time.Now()) }
+func formatDirTime(t time.Time) string {
 	return t.Format("20060102_150405") + fmt.Sprintf("_%03d", t.Nanosecond()/1000000)
 }

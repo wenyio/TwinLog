@@ -85,6 +85,7 @@ type Backend = {
   StartCapture(title: string, notes: string): Promise<RecordItem>;
   StopCapture(): Promise<RecordItem>;
   SaveNotes(path: string, notes: string): Promise<void>;
+  SaveTitle(path: string, title: string): Promise<void>;
   ListRecords(root: string): Promise<RecordItem[]>;
   ReadRecordLogs(path: string): Promise<RecordLogs>;
   DeleteRecords(paths: string[]): Promise<string>;

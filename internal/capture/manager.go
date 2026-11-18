@@ -602,10 +602,8 @@ func (m *Manager) StartCapture(title, notes string) (Record, error) {
 		return Record{}, fmt.Errorf("已有抓取正在进行")
 	}
 	title = strings.TrimSpace(title)
-	if title == "" {
-		return Record{}, fmt.Errorf("请输入标题")
-	}
-	dir, e := uniqueDir(m.sessionDir, timeDir()+"_"+safeName(title))
+	startedAt := time.Now()
+	dir, e := uniqueDir(m.sessionDir, captureDirName(startedAt, title))
 	if e != nil {
 		return Record{}, e
 	}
@@ -614,7 +612,7 @@ func (m *Manager) StartCapture(title, notes string) (Record, error) {
 	if e != nil {
 		return Record{}, e
 	}
-	r := Record{Path: dir, Title: title, Notes: notes, StartedAt: nowISO(), Source: source}
+	r := Record{Path: dir, Title: title, Notes: notes, StartedAt: startedAt.Format(time.RFC3339Nano), Source: source}
 	if source != "mcu" {
 		r.Package = m.config.Package
 		r.FilterGaps = m.trackerError != ""

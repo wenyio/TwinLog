@@ -73,7 +73,7 @@ func (a *App) beforeClose(ctx context.Context) bool {
 		}
 		a.mu.Unlock()
 		if waiting {
-			wruntime.EventsEmit(ctx, "error", "备注保存未完成，请稍后重试退出")
+			wruntime.EventsEmit(ctx, "error", "标题或备注尚未保存，请稍后重试退出")
 		}
 	}()
 	return true
@@ -161,6 +161,7 @@ func (a *App) StartCapture(title, notes string) (capture.Record, error) {
 }
 func (a *App) StopCapture() (capture.Record, error)              { return a.manager.StopCapture() }
 func (a *App) SaveNotes(path, notes string) error                { return a.manager.SaveNotes(path, notes) }
+func (a *App) SaveTitle(path, title string) error                { return a.manager.SaveTitle(path, title) }
 func (a *App) ListRecords(root string) ([]capture.Record, error) { return a.manager.ListRecords(root) }
 func (a *App) ReadRecordLogs(path string) (capture.RecordLogs, error) {
 	return a.manager.ReadRecordLogs(path)

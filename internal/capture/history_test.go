@@ -1,6 +1,8 @@
 package capture
 
 import (
+	"archive/zip"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,6 +26,66 @@ func historyRecord(t *testing.T, root, name string) string {
 		}
 	}
 	return p
+}
+
+func TestExportNamesUseCurrentTitlesWithoutMovingRecords(t *testing.T) {
+	root := t.TempDir()
+	m := NewManager(nil)
+	paths := []string{
+		historyRecord(t, root, "first"),
+		historyRecord(t, root, "second"),
+		historyRecord(t, root, "third"),
+	}
+	stamp := "2026-11-17T10:00:00.123+08:00"
+	titles := []string{"新/Title", "新?title", ""}
+	for i, path := range paths {
+		r, err := loadRecord(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.StartedAt = stamp
+		if err := writeJSON(filepath.Join(path, "record.json"), r); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.SaveTitle(path, titles[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dest := filepath.Join(root, "export.zip")
+	if err := m.Export(append(paths, paths[0]), dest, false); err != nil {
+		t.Fatal(err)
+	}
+	z, err := zip.OpenReader(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer z.Close()
+	if len(z.File) != 12 {
+		t.Fatalf("unexpected number of ZIP entries: %d", len(z.File))
+	}
+	for i, dir := range []string{"20261117_100000_123_新_Title", "20261117_100000_123_新_title_1", "20261117_100000_123"} {
+		p := "session/" + dir + "/"
+		for _, name := range []string{"mcu.log", "android.log", "notes.txt"} {
+			f, err := z.Open(p + name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.Close()
+		}
+		f, err := z.Open(p + "record.json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var r Record
+		err = json.NewDecoder(f).Decode(&r)
+		f.Close()
+		if err != nil || r.Title != titles[i] {
+			t.Fatalf("metadata for %q: %+v, %v", dir, r, err)
+		}
+		if _, err := os.Stat(filepath.Join(paths[i], "mcu.log")); err != nil {
+			t.Fatal("source directory changed:", err)
+		}
+	}
 }
 
 func TestHistoryLogPreview(t *testing.T) {
