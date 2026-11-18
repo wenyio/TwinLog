@@ -340,16 +340,6 @@ label {
 .app-dialog label { display: grid; gap: 5px; min-width: 0; }
 .app-dialog :is(input, select) { width: 100%; min-width: 0; }
 .dialog-error { color: #a13e32; overflow-wrap: anywhere; }
-.session-modes {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 3px;
-  padding: 3px;
-  border-radius: 6px;
-  background: var(--surface-subtle);
-}
-.session-modes button { min-height: 30px; }
-.session-modes button[aria-pressed="true"] { background: var(--surface); border-color: var(--border); }
 .app-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .batch-actions { display: flex; align-items: center; gap: 6px; margin-top: 9px; }
 .batch-actions .export { flex: 1; margin: 0; }

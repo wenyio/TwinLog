@@ -20,21 +20,15 @@ type FullLog struct {
 type Session struct {
 	Path      string   `json:"path"`
 	StartedAt string   `json:"startedAt"`
-	Group     string   `json:"group,omitempty"`
 	Title     string   `json:"title,omitempty"`
 	Managed   bool     `json:"managed"`
 	Records   []Record `json:"records"`
 	Full      *FullLog `json:"full"`
 }
 
-type SessionChoice struct {
-	Title        string `json:"title"`
-	ExistingPath string `json:"existingPath"`
-}
-
 type sessionMetadata struct {
 	StartedAt string
-	Group     string
+	Title     string
 }
 
 func readSessionMetadata(path string) (sessionMetadata, bool) {
@@ -47,75 +41,36 @@ func readSessionMetadata(path string) (sessionMetadata, bool) {
 	if err != nil || json.Unmarshal(b, &meta) != nil {
 		return meta, false
 	}
-	if meta.Group == "" {
-		meta.Group = filepath.Base(path)
-	}
 	_, err = time.Parse(time.RFC3339Nano, meta.StartedAt)
 	return meta, err == nil
-}
-
-const sessionNamesFile = ".twinlog-session-names.json"
-
-func readSessionNames(root string) (map[string]string, error) {
-	names := map[string]string{}
-	path := filepath.Join(root, sessionNamesFile)
-	st, err := os.Lstat(path)
-	if os.IsNotExist(err) {
-		return names, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	if !st.Mode().IsRegular() {
-		return nil, fmt.Errorf("会话名称文件不是普通文件: %s", path)
-	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	if err = json.Unmarshal(b, &names); err != nil || names == nil {
-		return nil, fmt.Errorf("会话名称文件格式无效: %s", path)
-	}
-	return names, nil
-}
-
-func validateSessionTitle(title string) (string, error) {
-	title = strings.TrimSpace(title)
-	if len([]rune(title)) > 100 || strings.ContainsAny(title, "\r\n") {
-		return "", fmt.Errorf("会话名称须为一行，最多 100 个字符")
-	}
-	return title, nil
-}
-
-func writeSessionTitle(root, group, title string) error {
-	names, err := readSessionNames(root)
-	if err != nil {
-		return err
-	}
-	if title == "" {
-		delete(names, group)
-	} else {
-		names[group] = title
-	}
-	return writeJSON(filepath.Join(root, sessionNamesFile), names)
 }
 
 func (m *Manager) SaveSessionTitle(root, path, title string) error {
 	m.op.Lock()
 	defer m.op.Unlock()
-	title, err := validateSessionTitle(title)
-	if err != nil {
-		return err
+	title = strings.TrimSpace(title)
+	if len([]rune(title)) > 100 || strings.ContainsAny(title, "\r\n") {
+		return fmt.Errorf("连接名称须为一行，最多 100 个字符")
 	}
 	p, err := managedSession(root, path)
 	if err != nil {
 		return err
 	}
-	meta, ok := readSessionMetadata(p)
-	if !ok {
-		return fmt.Errorf("会话信息无效: %s", path)
+	file := filepath.Join(p, "session.json")
+	b, err := os.ReadFile(file)
+	if err != nil {
+		return err
 	}
-	return writeSessionTitle(filepath.Dir(p), meta.Group, title)
+	var meta map[string]any
+	if err = json.Unmarshal(b, &meta); err != nil {
+		return err
+	}
+	if title == "" {
+		delete(meta, "title")
+	} else {
+		meta["title"] = title
+	}
+	return writeJSON(file, meta)
 }
 
 func fullLogInfo(path string) *FullLog {
@@ -153,10 +108,6 @@ func (m *Manager) ListSessions(root string) ([]Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	names, err := readSessionNames(root)
-	if err != nil {
-		return nil, err
-	}
 	byPath := map[string]*Session{}
 	for _, entry := range entries {
 		if !entry.IsDir() || strings.EqualFold(entry.Name(), "full") || strings.EqualFold(entry.Name(), ".twinlog-trash") {
@@ -164,7 +115,7 @@ func (m *Manager) ListSessions(root string) ([]Session, error) {
 		}
 		path := filepath.Join(root, entry.Name())
 		if meta, ok := readSessionMetadata(path); ok {
-			byPath[path] = &Session{Path: path, StartedAt: meta.StartedAt, Group: meta.Group, Title: names[meta.Group], Managed: true, Records: []Record{}, Full: fullLogInfo(filepath.Join(path, "full"))}
+			byPath[path] = &Session{Path: path, StartedAt: meta.StartedAt, Title: meta.Title, Managed: true, Records: []Record{}, Full: fullLogInfo(filepath.Join(path, "full"))}
 		}
 	}
 	records, err := m.ListRecords(root)

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Download, Ellipsis, FileText, Folder, FolderOpen, LoaderCircle, Pencil, Radio, ScrollText, Trash2 } from "lucide-react";
+import { Download, Ellipsis, FileText, Folder, FolderOpen, LoaderCircle, Pencil, ScrollText, Trash2 } from "lucide-react";
 import type { RecordItem, Session, State } from "./bridge";
 
 type Action = { label: string; icon: ReactNode; run: () => void; disabled?: boolean; danger?: boolean };
@@ -14,19 +14,6 @@ const shortStamp = new Intl.DateTimeFormat("sv-SE", {
 const shortTime = (s: Session) => !Number.isNaN(Date.parse(s.startedAt))
   ? shortStamp.format(new Date(s.startedAt)) : s.path.split(/[/\\]/).pop() || s.path;
 export const sessionLabel = (s: Session) => s.title?.trim() || shortTime(s);
-const groupKey = (s: Session) => s.group ? `group:${s.group}` : `path:${s.path}`;
-
-export function groupSessions(sessions: Session[]) {
-  const groups = new Map<string, Session[]>();
-  for (const session of sessions) {
-    const key = groupKey(session);
-    const connections = groups.get(key);
-    if (connections) connections.push(session);
-    else groups.set(key, [session]);
-  }
-  return groups;
-}
-
 function Writing({ label }: { label: string }) {
   return <span className="session-writing" title={label} aria-label={label}><LoaderCircle size={13} /></span>;
 }
@@ -51,14 +38,14 @@ export default function SessionList({ sessions, selected, viewPath, state, locke
   const popover = useRef<HTMLDivElement>(null);
   const viewed = sessions.find((s) => !!viewPath && (s.full?.path === viewPath || s.records.some((r) => r.path === viewPath)));
   const active = state.connected ? sessions.find((s) => state.sessionDir === s.path) : undefined;
-  const activePath = active?.path, activeGroup = active && groupKey(active);
-  const viewSession = viewed?.path, viewGroup = viewed && groupKey(viewed);
+  const activePath = active?.path;
+  const viewSession = viewed?.path;
   useEffect(() => {
-    if (viewSession && viewGroup) setExpanded((prev) => ({ ...prev, [viewSession]: true, [viewGroup]: true }));
-  }, [viewPath, viewSession, viewGroup]);
+    if (viewSession) setExpanded((prev) => ({ ...prev, [viewSession]: true }));
+  }, [viewPath, viewSession]);
   useEffect(() => {
-    if (activePath && activeGroup) setExpanded((prev) => ({ ...prev, [activePath]: true, [activeGroup]: true }));
-  }, [activePath, activeGroup]);
+    if (activePath) setExpanded((prev) => ({ ...prev, [activePath]: true }));
+  }, [activePath]);
   useEffect(() => {
     if (!menu) return;
     const panel = popover.current;
@@ -107,29 +94,29 @@ export default function SessionList({ sessions, selected, viewPath, state, locke
     </button>
   );
   const openFolder = (path: string): Action => ({ label: "打开目录", icon: <FolderOpen size={15} />, run: () => onOpenFolder(path) });
-  const rename = (s: Session): Action => ({ label: "重命名会话", icon: <Pencil size={15} />, run: () => onRename(s) });
+  const rename = (s: Session): Action => ({ label: "重命名连接", icon: <Pencil size={15} />, run: () => onRename(s) });
   const remove = (label: string, run: () => void, disabled: boolean): Action => ({ label, run, disabled, icon: <Trash2 size={15} />, danger: true });
   const exportItem = (label: string, run: () => void, disabled: boolean): Action => ({ label, run, disabled, icon: <Download size={15} /> });
-  const renderConnection = (s: Session, open: boolean, nested: boolean) => {
+  const renderConnection = (s: Session, open: boolean) => {
         const connected = state.connected && state.sessionDir === s.path;
         const writing = connected && !!s.full;
         const capturing = connected && state.capturing;
         const count = s.records.length;
         const date = sessionStamp(s.startedAt);
-        const short = shortTime(s);
-        return <div className={nested ? "connection-group" : undefined} key={s.path}>
+        const short = sessionLabel(s);
+        return <div key={s.path}>
           <div className="session-row">
             <button className="session-toggle" type="button" aria-expanded={open}
               title={`${date || short} · ${count} 条记录`}
-              aria-label={`${date || short}，${count} 条记录${!open && (writing || capturing) ? "，写入中" : ""}`}
-              onClick={() => setExpanded((prev) => ({ ...prev, [nested ? s.path : groupKey(s)]: !open }))}>
-              {nested ? <Radio size={14} /> : open ? <FolderOpen size={16} /> : <Folder size={16} />}
+              aria-label={`${short}，${count} 条记录${!open && (writing || capturing) ? "，写入中" : ""}`}
+              onClick={() => setExpanded((prev) => ({ ...prev, [s.path]: !open }))}>
+              {open ? <FolderOpen size={16} /> : <Folder size={16} />}
               <span>{short}</span><small className="session-count" title={`${count} 条记录`}>{count}</small>
               {!open && (writing || capturing) && <Writing label="写入中" />}
             </button>
-            {trigger(s.path, (nested ? "连接操作 · " : "会话操作 · ") + (date || short), [
+            {trigger(s.path, "连接操作 · " + short, [
               openFolder(s.path),
-              ...(!nested && s.managed ? [rename(s)] : []),
+              ...(s.managed ? [rename(s)] : []),
               ...(s.managed ? [remove("删除连接", () => onDeleteSession(s.path, false), connected)] : []),
             ])}
           </div>
@@ -168,33 +155,11 @@ export default function SessionList({ sessions, selected, viewPath, state, locke
         </div>;
   };
   return (
-    <div className="history-list" aria-label="日志会话">
-      {!sessions.length && <div className="history-empty"><FileText size={30} /><b>还没有日志会话</b></div>}
-      {[...groupSessions(sessions)].map(([key, connections], index) => {
-        const [latest] = connections;
-        const open = expanded[key] ?? (index === 0 || key === activeGroup);
-        if (connections.length === 1 && !latest.title)
-          return <section className="session-group" key={key}>{renderConnection(latest, open, false)}</section>;
-        const title = sessionLabel(latest);
-        const count = connections.reduce((sum, s) => sum + s.records.length, 0);
-        const writing = key === activeGroup && (!!active?.full || state.capturing);
-        return <section className="session-group" key={key}>
-          <div className="session-row">
-            <button className="session-toggle" type="button" aria-expanded={open}
-              title={`${title} · ${connections.length} 次连接 · ${count} 条记录`}
-              aria-label={`${title}，${count} 条记录${!open && writing ? "，写入中" : ""}`}
-              onClick={() => setExpanded((prev) => ({ ...prev, [key]: !open }))}>
-              {open ? <FolderOpen size={16} /> : <Folder size={16} />}
-              <span>{title}</span><small className="session-count" title={`${count} 条记录`}>{count}</small>
-              {!open && writing && <Writing label="写入中" />}
-            </button>
-            {trigger(key, "会话操作 · " + title, [rename(latest)])}
-          </div>
-          <div className="session-children" hidden={!open}>
-            {connections.map((s, i) => renderConnection(s, expanded[s.path] ?? (i === 0 || s.path === activePath), true))}
-          </div>
-        </section>;
-      })}
+    <div className="history-list" aria-label="日志连接">
+      {!sessions.length && <div className="history-empty"><FileText size={30} /><b>还没有日志连接</b></div>}
+      {sessions.map((s, index) => <section className="session-group" key={s.path}>
+        {renderConnection(s, expanded[s.path] ?? (index === 0 || s.path === activePath))}
+      </section>)}
       {menu && createPortal(<div className="row-popover" ref={popover} role="group" aria-label="行操作">
         {menu.actions.map((action) => <button type="button" key={action.label} disabled={action.disabled}
           className={action.danger ? "menu-danger" : undefined} onClick={() => {

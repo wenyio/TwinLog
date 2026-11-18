@@ -41,6 +41,17 @@ func writeJSON(path string, v any) error {
 	}
 	return AtomicWrite(path, b)
 }
+func writeRecord(path string, record Record) error {
+	return writeJSON(path, struct {
+		Title       string `json:"title"`
+		StartedAt   string `json:"startedAt"`
+		EndedAt     string `json:"endedAt"`
+		Package     string `json:"package"`
+		Source      string `json:"source,omitempty"`
+		Interrupted bool   `json:"interrupted"`
+		FilterGaps  bool   `json:"filterGaps,omitempty"`
+	}{record.Title, record.StartedAt, record.EndedAt, record.Package, record.Source, record.Interrupted, record.FilterGaps})
+}
 func safeName(s string) string {
 	s = strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) || strings.ContainsRune("<>:\"/\\|?*", r) {
@@ -166,7 +177,7 @@ func (m *Manager) SaveTitle(path, title string) error {
 		r = *m.record
 	}
 	r.Title = strings.TrimSpace(title)
-	if err := writeJSON(filepath.Join(path, "record.json"), r); err != nil {
+	if err := writeRecord(filepath.Join(path, "record.json"), r); err != nil {
 		return err
 	}
 	if active {

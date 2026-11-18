@@ -3,7 +3,6 @@ package capture
 import (
 	"bufio"
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -205,11 +204,11 @@ func checkAndroid(c Config) error {
 	return nil
 }
 
-func (m *Manager) Connect(c Config, session SessionChoice) error {
-	return m.connect(c, session, openSerial)
+func (m *Manager) Connect(c Config) error {
+	return m.connect(c, openSerial)
 }
 
-func (m *Manager) connect(c Config, session SessionChoice, openPort func(Config) (serial.Port, error)) error {
+func (m *Manager) connect(c Config, openPort func(Config) (serial.Port, error)) error {
 	m.op.Lock()
 	defer m.op.Unlock()
 	m.mu.Lock()
@@ -224,22 +223,7 @@ func (m *Manager) connect(c Config, session SessionChoice, openPort func(Config)
 	if c.OutputDir == "" {
 		return fmt.Errorf("请选择保存目录")
 	}
-	title, e := validateSessionTitle(session.Title)
-	if e != nil {
-		return e
-	}
-	var group string
-	if session.ExistingPath != "" {
-		p, err := managedSession(c.OutputDir, session.ExistingPath)
-		if err != nil {
-			return err
-		}
-		meta, ok := readSessionMetadata(p)
-		if !ok {
-			return fmt.Errorf("会话信息无效: %s", session.ExistingPath)
-		}
-		group = meta.Group
-	}
+	var e error
 	var identity appIdentity
 	var pids map[string]bool
 	systemPID := ""
@@ -315,15 +299,7 @@ func (m *Manager) connect(c Config, session SessionChoice, openPort func(Config)
 	if e != nil {
 		return e
 	}
-	if group == "" {
-		group = rand.Text()
-		if title != "" {
-			if e = writeSessionTitle(c.OutputDir, group, title); e != nil {
-				return e
-			}
-		}
-	}
-	meta := map[string]any{"config": c, "startedAt": nowISO(), "group": group, "timezone": time.Now().Format("MST -07:00")}
+	meta := map[string]any{"config": c, "startedAt": nowISO(), "timezone": time.Now().Format("MST -07:00")}
 	if cmd != nil {
 		meta["androidCommand"] = cmd.Args
 	}
@@ -666,7 +642,7 @@ func (m *Manager) StartCapture(title, notes string) (Record, error) {
 		r.FilterGaps = m.trackerError != ""
 	}
 	if e = AtomicWrite(filepath.Join(dir, "notes.txt"), []byte(notes)); e == nil {
-		e = writeJSON(filepath.Join(dir, "record.json"), r)
+		e = writeRecord(filepath.Join(dir, "record.json"), r)
 	}
 	if e != nil {
 		a.close()
@@ -695,7 +671,7 @@ func (m *Manager) finishLocked(interrupted bool) error {
 	if e != nil {
 		m.record.Interrupted = true
 	}
-	e = errors.Join(e, writeJSON(filepath.Join(m.record.Path, "record.json"), m.record))
+	e = errors.Join(e, writeRecord(filepath.Join(m.record.Path, "record.json"), *m.record))
 	m.record = nil
 	return e
 }

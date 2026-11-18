@@ -168,6 +168,13 @@ func TestCaptureTitleCanBeBlankAndUpdated(t *testing.T) {
 	if err = m.SaveTitle(r.Path, " \t "); err != nil {
 		t.Fatal(err)
 	}
+	data, err := os.ReadFile(filepath.Join(r.Path, "record.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"path"`) || strings.Contains(string(data), `"notes"`) {
+		t.Fatalf("record metadata contains duplicated path or notes: %s", data)
+	}
 	records, err := NewManager(nil).ListRecords(root)
 	if err != nil || len(records) != 1 || records[0].Title != "" || records[0].Notes != stopped.Notes ||
 		records[0].Path != r.Path || records[0].EndedAt != stopped.EndedAt {

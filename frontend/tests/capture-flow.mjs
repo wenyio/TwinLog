@@ -228,21 +228,7 @@ try {
   await page.getByRole("button", { name: "展开操作栏", exact: true }).click();
   await connection.waitFor();
   const connectButton = connection.getByRole("button", { name: "连接设备", exact: true });
-  const connectDialog = page.getByRole("dialog", { name: "连接设备" });
-  const connect = async (name = "") => {
-    await connectButton.click();
-    if (name) await connectDialog.getByRole("textbox", { name: "会话名称" }).fill(name);
-    await connectDialog.getByRole("button", { name: "连接", exact: true }).click();
-  };
-  await connectButton.click();
-  await connectDialog.waitFor();
-  assert.ok(await connectDialog.getByRole("button", { name: "已有会话" }).isDisabled());
-  const dialogBox = await connectDialog.boundingBox();
-  const viewport = page.viewportSize();
-  assert.ok(dialogBox.x >= 0 && dialogBox.y >= 0 && dialogBox.x + dialogBox.width <= viewport.width && dialogBox.y + dialogBox.height <= viewport.height);
-  await page.keyboard.press("Escape");
-  await connectDialog.waitFor({ state: "hidden" });
-  assert.deepEqual(await page.evaluate(() => window.calls.connectSessions), []);
+  const connect = async () => { await connectButton.click(); };
   assert.equal(await capture.isVisible(), false);
   await connection.getByRole("button", { name: "更多设置" }).click();
   const fullLogs = connection.getByRole("checkbox", { name: "保存完整日志" });
@@ -259,7 +245,6 @@ try {
   await title.waitFor();
   await page.getByText("已连接 · 未保存完整日志", { exact: true }).waitFor();
   assert.equal(await page.evaluate(() => window.calls.connectConfigs.at(-1).saveFullLogs), false);
-  assert.deepEqual(await page.evaluate(() => window.calls.connectSessions.at(-1)), { title: "首次排查", existingPath: "" });
   await page.waitForFunction(
     () => document.activeElement?.getAttribute("aria-label") === "抓取标题",
   );
@@ -491,7 +476,7 @@ try {
   await page.evaluate(() => (window.calls.failDeletePartially = false));
   await page.getByRole("button", { name: "删除所选", exact: true }).click();
   await page.getByText("已删除 1 条记录", { exact: true }).waitFor();
-  await page.getByText("还没有日志会话", { exact: true }).waitFor();
+  await page.getByText("还没有日志连接", { exact: true }).waitFor();
   assert.ok(await selectAll.isDisabled());
   assert.equal(await selectAll.isChecked(), false);
 
@@ -511,7 +496,7 @@ try {
   await connectionTab.click();
   await disconnectButton.click();
   await page.evaluate(() => (window.calls.androidUnavailable = true));
-  await connect("只连串口时保留会话名称");
+  await connect();
   await page.getByText(/Android 连接失败：设备离线/).waitFor();
   assert.equal(await disconnectButton.count(), 0, "do not silently connect only one source");
   await page.getByRole("button", { name: "仅连接串口", exact: true }).click();
@@ -519,10 +504,7 @@ try {
   await assertSinglePane("MCU 串口");
   assert.equal(await capture.getByText("Android 应用").count(), 0);
   assert.equal(await page.evaluate(() => window.calls.connectConfigs.at(-1).androidSerial), "");
-  assert.deepEqual(await page.evaluate(() => window.calls.connectSessions.slice(-2)), [
-    { title: "只连串口时保留会话名称", existingPath: "" },
-    { title: "只连串口时保留会话名称", existingPath: "" },
-  ]);
+  assert.equal(await page.evaluate(() => window.calls.connectConfigs.slice(-2).length), 2);
   await title.fill("仅串口记录");
   await capture.getByRole("button", { name: "开始抓取", exact: true }).click();
   await page.evaluate(() => (window.calls.failRead = true));
@@ -609,19 +591,16 @@ try {
       ListPorts: async () => [], ListDevices: async () => [],
       ListSessions: async () => structuredClone(sessions),
       Disconnect: async () => { state.connected = false; window.emitHistoryEvent("state", state); },
-      Connect: async (_, choice) => {
-        window.sessionCalls.push(choice);
-        const previous = sessions.find((s) => s.path === choice.existingPath);
-        previous.group ??= "test-group";
+      Connect: async () => {
+        window.sessionCalls.push("connect");
         const path = "test/reconnected";
-        sessions.unshift({ ...previous, path, startedAt: "2026-11-18T03:00:00Z", records: [record(path + "/r1", "重连后记录")], full: full(path) });
+        sessions.unshift({ path, startedAt: "2026-11-18T03:00:00Z", managed: true, records: [record(path + "/r1", "重连后记录")], full: full(path) });
         state.sessionDir = path;
         state.connected = true;
         window.emitHistoryEvent("state", state);
       },
       SaveSessionTitle: async (path, title) => {
-        const current = sessions.find((s) => s.path === path);
-        for (const s of sessions) if (s === current || (current.group && s.group === current.group)) s.title = title;
+        sessions.find((s) => s.path === path).title = title;
         window.sessionCalls.push({ path, title });
       },
       ReadFullLogs: async (path) => {
@@ -755,62 +734,48 @@ try {
   assert.equal(await oldSession.locator(".record-row").count(), 2);
   assert.ok(await oldSession.getByRole("checkbox", { name: "选择 重连测试" }).isChecked());
   assert.ok(await historyPage.getByRole("checkbox", { name: "附带完整日志" }).isDisabled());
-  await showMenu(oldSession.getByRole("button", { name: /会话操作/ }));
+  await showMenu(oldSession.getByRole("button", { name: /连接操作/ }));
   await action("删除连接").click();
   await historyPage.getByText("已删除连接", { exact: true }).waitFor();
   assert.equal(await groups.count(), 1);
   assert.deepEqual(await historyPage.evaluate(() => window.historyCalls.slice(3)), [["test/old", true], ["test/old", false]]);
   const historyConnection = historyPage.getByRole("tabpanel", { name: "设备连接", exact: true });
-  const renameDialog = historyPage.getByRole("dialog", { name: "重命名会话" });
-  await showMenu(activeSession.getByRole("button", { name: /会话操作/ }));
-  await action("重命名会话").click();
-  await renameDialog.getByRole("textbox", { name: "会话名称" }).fill("参数下发失败");
+  const renameDialog = historyPage.getByRole("dialog", { name: "重命名连接" });
+  await showMenu(activeSession.getByRole("button", { name: /连接操作/ }));
+  await action("重命名连接").click();
+  await renameDialog.getByRole("textbox", { name: "连接名称" }).fill("参数下发失败");
   await renameDialog.getByRole("button", { name: "保存", exact: true }).click();
   const named = activeSession.getByRole("button", { name: "参数下发失败，0 条记录", exact: true });
   await named.waitFor();
   await historyPage.getByRole("tab", { name: "设备连接", exact: true }).click();
   await historyConnection.getByRole("button", { name: "断开连接", exact: true }).click();
   await historyConnection.getByRole("button", { name: "连接设备", exact: true }).click();
-  const reconnectDialog = historyPage.getByRole("dialog", { name: "连接设备" });
-  await reconnectDialog.getByRole("button", { name: "已有会话" }).click();
-  const connectExisting = reconnectDialog.getByRole("button", { name: "连接", exact: true });
-  assert.ok(await connectExisting.isDisabled());
-  await reconnectDialog.getByRole("combobox", { name: "会话", exact: true }).selectOption("test/live");
-  await connectExisting.click();
-  const connections = activeSession.locator(".connection-group");
-  await historyPage.waitForFunction(() => document.querySelectorAll(".connection-group").length === 2);
-  assert.equal(await groups.count(), 1);
-  assert.equal(await activeSession.locator(":scope > .session-row .session-count").textContent(), "1");
-  assert.deepEqual(await connections.locator(":scope > .session-row .session-count").allTextContents(), ["1", "0"]);
-  assert.ok(await connections.first().locator(".full-row .session-writing").isVisible());
-  assert.equal(await connections.last().locator(".full-row .session-writing").count(), 0);
-  if ((await connections.last().locator(".session-toggle").getAttribute("aria-expanded")) === "false") {
-    await connections.last().locator(".session-toggle").click();
-  }
-  await connections.last().locator(".full-row .history-item").click();
-  await historyPage.getByText(/完整 Android 日志 test\/live/).waitFor();
-  assert.deepEqual(await historyPage.evaluate(() => window.sessionCalls), [
-    { path: "test/live", title: "参数下发失败" },
-    { title: "", existingPath: "test/live" },
-  ]);
-  await showMenu(activeSession.getByRole("button", { name: /会话操作 · 参数下发失败/ }));
-  await action("重命名会话").click();
-  assert.equal(await renameDialog.getByRole("textbox", { name: "会话名称" }).inputValue(), "参数下发失败");
-  await renameDialog.getByRole("textbox", { name: "会话名称" }).fill("复测同一问题");
+  await historyPage.waitForFunction(() => document.querySelectorAll(".session-group").length === 2);
+  assert.equal(await historyPage.getByRole("dialog", { name: "连接设备" }).count(), 0);
+  const reconnected = groups.first();
+  const previous = groups.nth(1);
+  assert.equal(await previous.locator(".session-toggle span").textContent(), "参数下发失败");
+  assert.ok(await reconnected.locator(".full-row .session-writing").isVisible());
+  await showMenu(previous.getByRole("button", { name: /连接操作 · 参数下发失败/ }));
+  await action("重命名连接").click();
+  assert.equal(await renameDialog.getByRole("textbox", { name: "连接名称" }).inputValue(), "参数下发失败");
+  await renameDialog.getByRole("textbox", { name: "连接名称" }).fill("复测同一问题");
   await renameDialog.getByRole("button", { name: "保存", exact: true }).click();
-  await activeSession.getByRole("button", { name: "复测同一问题，1 条记录", exact: true }).waitFor();
-  assert.equal(await connections.count(), 2);
-  await showMenu(connections.first().getByRole("button", { name: /连接操作/ }));
+  await previous.getByRole("button", { name: "复测同一问题，0 条记录", exact: true }).waitFor();
+  assert.deepEqual(await historyPage.evaluate(() => window.sessionCalls), [
+    { path: "test/live", title: "参数下发失败" }, "connect",
+    { path: "test/live", title: "复测同一问题" },
+  ]);
+  await showMenu(reconnected.getByRole("button", { name: /连接操作/ }));
   assert.ok(await action("删除连接").isDisabled());
   await historyPage.keyboard.press("Escape");
-  await showMenu(connections.last().getByRole("button", { name: /连接操作/ }));
+  await showMenu(previous.getByRole("button", { name: /连接操作/ }));
   await action("删除连接").click();
   await historyPage.getByText("已删除连接", { exact: true }).waitFor();
   assert.equal(await groups.count(), 1);
-  assert.equal(await connections.count(), 1);
   assert.deepEqual(await historyPage.evaluate(() => window.historyCalls.at(-1)), ["test/live", false]);
   console.log("PASS: bottom batch selection, hover and keyboard menus without layout shift, live shortcut, historical full preview, export and deletion scope");
-  console.log("PASS: optional session name, legacy renaming and reconnecting to an existing session with separate full logs");
+  console.log("PASS: direct reconnect, independent connection names and separate full logs");
 } finally {
   await browser?.close();
   server.kill();

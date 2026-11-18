@@ -47,15 +47,10 @@ export interface FullLog {
 export interface Session {
   path: string;
   startedAt: string;
-  group?: string;
   title?: string;
   managed: boolean;
   records: RecordItem[];
   full: FullLog | null;
-}
-export interface SessionChoice {
-  title: string;
-  existingPath: string;
 }
 export interface LogPreview {
   text: string;
@@ -100,7 +95,7 @@ type Backend = {
   ListPackages(adb: string, serial: string): Promise<string[]>;
   SelectDirectory(): Promise<string>;
   SelectADB(): Promise<string>;
-  Connect(c: Config, session: SessionChoice): Promise<void>;
+  Connect(c: Config): Promise<void>;
   Disconnect(): Promise<void>;
   SetPackage(pkg: string): Promise<void>;
   StartCapture(title: string, notes: string): Promise<RecordItem>;

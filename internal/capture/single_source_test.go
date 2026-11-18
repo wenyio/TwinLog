@@ -70,7 +70,7 @@ func TestSingleSourceSession(t *testing.T) {
 				}
 				m := NewManager(nil)
 				t.Cleanup(func() { _ = m.Disconnect() })
-				if err := m.connect(c, SessionChoice{}, func(Config) (serial.Port, error) {
+				if err := m.connect(c, func(Config) (serial.Port, error) {
 					if source == "android" {
 						t.Fatal("Android-only connection tried to open a serial port")
 					}
@@ -170,22 +170,22 @@ func waitForBytes(t *testing.T, m *Manager, source string) {
 
 func TestConnectRequiresAtLeastOneSource(t *testing.T) {
 	m := NewManager(nil)
-	if err := m.Connect(Config{OutputDir: t.TempDir()}, SessionChoice{}); err == nil || m.State().Connected {
+	if err := m.Connect(Config{OutputDir: t.TempDir()}); err == nil || m.State().Connected {
 		t.Fatalf("connection without devices: %v", err)
 	}
 }
 
-func TestReconnectToNamedSession(t *testing.T) {
+func TestIndependentConnections(t *testing.T) {
 	root := t.TempDir()
 	m := NewManager(nil)
 	t.Cleanup(func() { _ = m.Disconnect() })
 	c := Config{OutputDir: root, SerialPort: "fake port", SaveFullLogs: true}
-	connect := func(choice SessionChoice, text string) (string, string) {
+	connect := func(text string) (string, string) {
 		t.Helper()
 		reader, writer := io.Pipe()
 		defer writer.Close()
 		defer reader.Close()
-		if err := m.connect(c, choice, func(Config) (serial.Port, error) {
+		if err := m.connect(c, func(Config) (serial.Port, error) {
 			return testSerialPort{PipeReader: reader}, nil
 		}); err != nil {
 			t.Fatal(err)
@@ -204,8 +204,8 @@ func TestReconnectToNamedSession(t *testing.T) {
 		}
 		return dir, r.Path
 	}
-	first, r1 := connect(SessionChoice{Title: "  同一故障  "}, "first")
-	second, r2 := connect(SessionChoice{ExistingPath: first}, "second")
+	first, r1 := connect("first")
+	second, r2 := connect("second")
 	if first == second || filepath.Dir(r1) != first || filepath.Dir(r2) != second {
 		t.Fatalf("connection directories were reused: %s %s", first, second)
 	}
@@ -215,29 +215,25 @@ func TestReconnectToNamedSession(t *testing.T) {
 			t.Fatalf("full log %s: %q, %v", dir, b, err)
 		}
 	}
-	checkGroup := func(title string) {
-		t.Helper()
-		s, err := NewManager(nil).ListSessions(root)
-		if err != nil || len(s) != 2 || s[0].Group == "" || s[0].Group != s[1].Group || s[0].Title != title || s[1].Title != title {
-			t.Fatalf("session group: %+v, %v", s, err)
+	if err := m.SaveSessionTitle(root, second, "  重命名后  "); err != nil {
+		t.Fatal(err)
+	}
+	sessions, err := NewManager(nil).ListSessions(root)
+	if err != nil || len(sessions) != 2 {
+		t.Fatalf("connections: %+v, %v", sessions, err)
+	}
+	for _, session := range sessions {
+		if session.Path == second && session.Title != "重命名后" {
+			t.Fatalf("renamed: %+v", session)
+		}
+		if session.Path == first && session.Title != "" {
+			t.Fatalf("other connection changed: %+v", session)
 		}
 	}
-	checkGroup("同一故障")
-	if err := m.SaveSessionTitle(root, second, "重命名后"); err != nil {
+	if err := m.SaveSessionTitle(root, r1, "不是连接"); err == nil {
+		t.Fatal("renamed a record")
+	}
+	if err := m.SaveSessionTitle(root, second, ""); err != nil {
 		t.Fatal(err)
-	}
-	checkGroup("重命名后")
-	if err := m.SaveSessionTitle(root, first, ""); err != nil {
-		t.Fatal(err)
-	}
-	checkGroup("")
-	if err := m.SaveSessionTitle(root, r1, "不是会话"); err == nil {
-		t.Fatal("renamed a record as a session")
-	}
-	if err := m.connect(c, SessionChoice{ExistingPath: r1}, func(Config) (serial.Port, error) {
-		t.Fatal("invalid session opened a device")
-		return nil, nil
-	}); err == nil {
-		t.Fatal("accepted a record as a session")
 	}
 }

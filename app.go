@@ -144,11 +144,11 @@ func (a *App) SelectDirectory() (string, error) {
 func (a *App) SelectADB() (string, error) {
 	return wruntime.OpenFileDialog(a.ctx, wruntime.OpenDialogOptions{Title: "选择 adb", Filters: []wruntime.FileFilter{{DisplayName: "ADB", Pattern: "adb.exe;adb"}}})
 }
-func (a *App) Connect(c capture.Config, session capture.SessionChoice) error {
+func (a *App) Connect(c capture.Config) error {
 	if e := a.SaveConfig(c); e != nil {
 		return e
 	}
-	return a.manager.Connect(c, session)
+	return a.manager.Connect(c)
 }
 func (a *App) Disconnect() error { return a.manager.Disconnect() }
 func (a *App) SetPackage(pkg string) error {
@@ -181,7 +181,7 @@ func (a *App) ReadFullLogs(session string) (capture.RecordLogs, error) {
 func (a *App) DeleteSessionLogs(path string, fullOnly bool) error {
 	return a.manager.RemoveSessionLogs(a.GetConfig().OutputDir, path, fullOnly, func(s capture.Session) (bool, error) {
 		title := "删除连接"
-		message := fmt.Sprintf("确定删除连接 %s？\n本次连接的整个目录将移入回收站，包括 %d 条记录及备注、连接信息和目录内其他文件。同一会话的其他连接不会被删除。", filepath.Base(s.Path), len(s.Records))
+		message := fmt.Sprintf("确定删除连接 %s？\n本次连接的整个目录将移入回收站，包括 %d 条记录及备注、连接信息和目录内其他文件。", filepath.Base(s.Path), len(s.Records))
 		if s.Full != nil {
 			message += "\n完整日志也将一并删除。"
 		}
