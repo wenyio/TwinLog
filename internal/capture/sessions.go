@@ -20,23 +20,102 @@ type FullLog struct {
 type Session struct {
 	Path      string   `json:"path"`
 	StartedAt string   `json:"startedAt"`
+	Group     string   `json:"group,omitempty"`
+	Title     string   `json:"title,omitempty"`
 	Managed   bool     `json:"managed"`
 	Records   []Record `json:"records"`
 	Full      *FullLog `json:"full"`
 }
 
-func sessionStart(path string) (string, bool) {
-	var meta struct{ StartedAt string }
+type SessionChoice struct {
+	Title        string `json:"title"`
+	ExistingPath string `json:"existingPath"`
+}
+
+type sessionMetadata struct {
+	StartedAt string
+	Group     string
+}
+
+func readSessionMetadata(path string) (sessionMetadata, bool) {
+	var meta sessionMetadata
 	file := filepath.Join(path, "session.json")
 	if st, err := os.Lstat(file); err != nil || !st.Mode().IsRegular() {
-		return "", false
+		return meta, false
 	}
 	b, err := os.ReadFile(file)
 	if err != nil || json.Unmarshal(b, &meta) != nil {
-		return "", false
+		return meta, false
+	}
+	if meta.Group == "" {
+		meta.Group = filepath.Base(path)
 	}
 	_, err = time.Parse(time.RFC3339Nano, meta.StartedAt)
-	return meta.StartedAt, err == nil
+	return meta, err == nil
+}
+
+const sessionNamesFile = ".twinlog-session-names.json"
+
+func readSessionNames(root string) (map[string]string, error) {
+	names := map[string]string{}
+	path := filepath.Join(root, sessionNamesFile)
+	st, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return names, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !st.Mode().IsRegular() {
+		return nil, fmt.Errorf("会话名称文件不是普通文件: %s", path)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if err = json.Unmarshal(b, &names); err != nil || names == nil {
+		return nil, fmt.Errorf("会话名称文件格式无效: %s", path)
+	}
+	return names, nil
+}
+
+func validateSessionTitle(title string) (string, error) {
+	title = strings.TrimSpace(title)
+	if len([]rune(title)) > 100 || strings.ContainsAny(title, "\r\n") {
+		return "", fmt.Errorf("会话名称须为一行，最多 100 个字符")
+	}
+	return title, nil
+}
+
+func writeSessionTitle(root, group, title string) error {
+	names, err := readSessionNames(root)
+	if err != nil {
+		return err
+	}
+	if title == "" {
+		delete(names, group)
+	} else {
+		names[group] = title
+	}
+	return writeJSON(filepath.Join(root, sessionNamesFile), names)
+}
+
+func (m *Manager) SaveSessionTitle(root, path, title string) error {
+	m.op.Lock()
+	defer m.op.Unlock()
+	title, err := validateSessionTitle(title)
+	if err != nil {
+		return err
+	}
+	p, err := managedSession(root, path)
+	if err != nil {
+		return err
+	}
+	meta, ok := readSessionMetadata(p)
+	if !ok {
+		return fmt.Errorf("会话信息无效: %s", path)
+	}
+	return writeSessionTitle(filepath.Dir(p), meta.Group, title)
 }
 
 func fullLogInfo(path string) *FullLog {
@@ -74,14 +153,18 @@ func (m *Manager) ListSessions(root string) ([]Session, error) {
 	if err != nil {
 		return nil, err
 	}
+	names, err := readSessionNames(root)
+	if err != nil {
+		return nil, err
+	}
 	byPath := map[string]*Session{}
 	for _, entry := range entries {
 		if !entry.IsDir() || strings.EqualFold(entry.Name(), "full") || strings.EqualFold(entry.Name(), ".twinlog-trash") {
 			continue
 		}
 		path := filepath.Join(root, entry.Name())
-		if started, ok := sessionStart(path); ok {
-			byPath[path] = &Session{Path: path, StartedAt: started, Managed: true, Records: []Record{}, Full: fullLogInfo(filepath.Join(path, "full"))}
+		if meta, ok := readSessionMetadata(path); ok {
+			byPath[path] = &Session{Path: path, StartedAt: meta.StartedAt, Group: meta.Group, Title: names[meta.Group], Managed: true, Records: []Record{}, Full: fullLogInfo(filepath.Join(path, "full"))}
 		}
 	}
 	records, err := m.ListRecords(root)
@@ -134,7 +217,7 @@ func managedSession(root, path string) (string, error) {
 	if err := directDir(p); err != nil {
 		return "", err
 	}
-	if _, ok := sessionStart(p); !ok {
+	if _, ok := readSessionMetadata(p); !ok {
 		return "", fmt.Errorf("会话信息无效: %s", path)
 	}
 	return p, nil
@@ -186,8 +269,8 @@ func (m *Manager) removeSessionLogs(root, path string, fullOnly bool, confirm fu
 	if state.Connected && sameResolvedPath(state.SessionDir, p) {
 		return fmt.Errorf("请先断开此会话的设备连接")
 	}
-	started, _ := sessionStart(p)
-	s := Session{Path: p, StartedAt: started, Full: fullLogInfo(filepath.Join(p, "full"))}
+	meta, _ := readSessionMetadata(p)
+	s := Session{Path: p, StartedAt: meta.StartedAt, Full: fullLogInfo(filepath.Join(p, "full"))}
 	target := p
 	if fullOnly {
 		if s.Full == nil {

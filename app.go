@@ -144,11 +144,11 @@ func (a *App) SelectDirectory() (string, error) {
 func (a *App) SelectADB() (string, error) {
 	return wruntime.OpenFileDialog(a.ctx, wruntime.OpenDialogOptions{Title: "选择 adb", Filters: []wruntime.FileFilter{{DisplayName: "ADB", Pattern: "adb.exe;adb"}}})
 }
-func (a *App) Connect(c capture.Config) error {
+func (a *App) Connect(c capture.Config, session capture.SessionChoice) error {
 	if e := a.SaveConfig(c); e != nil {
 		return e
 	}
-	return a.manager.Connect(c)
+	return a.manager.Connect(c, session)
 }
 func (a *App) Disconnect() error { return a.manager.Disconnect() }
 func (a *App) SetPackage(pkg string) error {
@@ -168,6 +168,9 @@ func (a *App) SaveTitle(path, title string) error   { return a.manager.SaveTitle
 func (a *App) ListSessions(root string) ([]capture.Session, error) {
 	return a.manager.ListSessions(root)
 }
+func (a *App) SaveSessionTitle(path, title string) error {
+	return a.manager.SaveSessionTitle(a.GetConfig().OutputDir, path, title)
+}
 func (a *App) ReadRecordLogs(path string) (capture.RecordLogs, error) {
 	return a.manager.ReadRecordLogs(path, a.GetConfig().PreviewLines)
 }
@@ -177,14 +180,14 @@ func (a *App) ReadFullLogs(session string) (capture.RecordLogs, error) {
 }
 func (a *App) DeleteSessionLogs(path string, fullOnly bool) error {
 	return a.manager.RemoveSessionLogs(a.GetConfig().OutputDir, path, fullOnly, func(s capture.Session) (bool, error) {
-		title := "删除会话"
-		message := fmt.Sprintf("确定删除会话 %s？\n整个会话目录将移入回收站，包括 %d 条记录及备注、会话信息和目录内其他文件。", filepath.Base(s.Path), len(s.Records))
+		title := "删除连接"
+		message := fmt.Sprintf("确定删除连接 %s？\n本次连接的整个目录将移入回收站，包括 %d 条记录及备注、连接信息和目录内其他文件。同一会话的其他连接不会被删除。", filepath.Base(s.Path), len(s.Records))
 		if s.Full != nil {
 			message += "\n完整日志也将一并删除。"
 		}
 		if fullOnly {
 			title = "删除完整日志"
-			message = fmt.Sprintf("确定删除会话 %s 的完整日志？\n仅将 full 目录移入回收站，保留会话、记录和备注。", filepath.Base(s.Path))
+			message = fmt.Sprintf("确定删除连接 %s 的完整日志？\n仅将 full 目录移入回收站，保留连接、记录和备注。", filepath.Base(s.Path))
 		}
 		answer, err := wruntime.MessageDialog(a.ctx, wruntime.MessageDialogOptions{
 			Type: wruntime.QuestionDialog, Title: title, Message: message,

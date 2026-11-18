@@ -101,4 +101,15 @@ func TestSessionManagement(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	sessions, err = m.ListSessions(root)
+	if err != nil || len(sessions) != 1 || sessions[0].Path != active || sessions[0].Group != filepath.Base(active) || sessions[0].Title != "" {
+		t.Fatalf("legacy sessions after removal: %+v, %v", sessions, err)
+	}
+	if err := m.SaveSessionTitle(root, active, "旧会话补名"); err != nil {
+		t.Fatal(err)
+	}
+	sessions, err = m.ListSessions(root)
+	if err != nil || len(sessions) != 1 || sessions[0].Title != "旧会话补名" {
+		t.Fatalf("legacy session name: %+v, %v", sessions, err)
+	}
 }

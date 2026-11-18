@@ -3,6 +3,7 @@ package capture
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -204,9 +205,11 @@ func checkAndroid(c Config) error {
 	return nil
 }
 
-func (m *Manager) Connect(c Config) error { return m.connect(c, openSerial) }
+func (m *Manager) Connect(c Config, session SessionChoice) error {
+	return m.connect(c, session, openSerial)
+}
 
-func (m *Manager) connect(c Config, openPort func(Config) (serial.Port, error)) error {
+func (m *Manager) connect(c Config, session SessionChoice, openPort func(Config) (serial.Port, error)) error {
 	m.op.Lock()
 	defer m.op.Unlock()
 	m.mu.Lock()
@@ -221,11 +224,26 @@ func (m *Manager) connect(c Config, openPort func(Config) (serial.Port, error)) 
 	if c.OutputDir == "" {
 		return fmt.Errorf("请选择保存目录")
 	}
+	title, e := validateSessionTitle(session.Title)
+	if e != nil {
+		return e
+	}
+	var group string
+	if session.ExistingPath != "" {
+		p, err := managedSession(c.OutputDir, session.ExistingPath)
+		if err != nil {
+			return err
+		}
+		meta, ok := readSessionMetadata(p)
+		if !ok {
+			return fmt.Errorf("会话信息无效: %s", session.ExistingPath)
+		}
+		group = meta.Group
+	}
 	var identity appIdentity
 	var pids map[string]bool
 	systemPID := ""
 	trackerWarning := ""
-	var e error
 	if c.AndroidSerial != "" {
 		if e = checkAndroid(c); e != nil {
 			return fmt.Errorf("Android 连接失败：%w", e)
@@ -297,7 +315,15 @@ func (m *Manager) connect(c Config, openPort func(Config) (serial.Port, error)) 
 	if e != nil {
 		return e
 	}
-	meta := map[string]any{"config": c, "startedAt": nowISO(), "timezone": time.Now().Format("MST -07:00")}
+	if group == "" {
+		group = rand.Text()
+		if title != "" {
+			if e = writeSessionTitle(c.OutputDir, group, title); e != nil {
+				return e
+			}
+		}
+	}
+	meta := map[string]any{"config": c, "startedAt": nowISO(), "group": group, "timezone": time.Now().Format("MST -07:00")}
 	if cmd != nil {
 		meta["androidCommand"] = cmd.Args
 	}

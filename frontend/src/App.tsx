@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import LogSplit from "./LogSplit";
 import LogPane, { emptyPreview, trimPreview } from "./LogPane";
-import SessionList, { recordTitle as displayTitle } from "./SessionList";
+import SessionList, { groupSessions, recordTitle as displayTitle } from "./SessionList";
+import SessionDialog from "./SessionDialog";
 import { version } from "../package.json";
 import {
   Activity,
@@ -35,6 +36,7 @@ import {
   RecordItem,
   RecordLogs,
   Session,
+  SessionChoice,
   LogSource,
   Port,
   Device,
@@ -95,9 +97,10 @@ export default function App() {
     [title, setTitle] = useState(""),
     [notes, setNotes] = useState(""),
     [advanced, setAdvanced] = useState(false);
+  const [sessionDialog, setSessionDialog] = useState<"connect" | Session | null>(null);
   const [busy, setBusy] = useState(""),
     [error, setError] = useState(""),
-    [fallbackSource, setFallbackSource] = useState<LogSource | null>(null),
+    [fallback, setFallback] = useState<{ source: LogSource; session: SessionChoice } | null>(null),
     [notice, setNotice] = useState(""),
     [includeFull, setIncludeFull] = useState(false),
     [mcu, setMcu] = useState(emptyPreview),
@@ -107,6 +110,8 @@ export default function App() {
     [searchPane, setSearchPane] = useState<string | null>(null),
     [saveStatus, setSaveStatus] = useState<"saved" | "pending" | "failed">("saved");
   const records = useMemo(() => sessions.flatMap((s) => s.records), [sessions]);
+  const sessionGroups = useMemo(() => groupSessions(sessions), [sessions]);
+  const sessionChoices = [...sessionGroups.values()].map(([latest]) => latest).filter((s) => s.managed);
   const lastPane = useRef<LogSource>("mcu");
   const mcuFind = useRef<HTMLButtonElement>(null);
   const androidFind = useRef<HTMLButtonElement>(null);
@@ -304,7 +309,7 @@ export default function App() {
       refreshRecords().catch((e) => setError(String(e)));
   }, [state.connected, state.capturing]);
   const patch = (v: Partial<Config>) => {
-    setFallbackSource(null);
+    setFallback(null);
     setConfig((c) => ({ ...c, ...v }));
   };
   const changeView = async (r: RecordItem) => {
@@ -360,8 +365,10 @@ export default function App() {
         const c = { ...config, outputDir: p };
         await api.SaveConfig(c);
         setConfig(c);
+        setFallback(null);
         resetView();
         setSelected(new Set());
+        setSessions([]);
         await refreshRecords(p);
       }
     });
@@ -377,21 +384,21 @@ export default function App() {
       );
       if (errors.length) setError(errors.join(" · "));
     });
-  const connect = (next = config) =>
+  const connect = (session: SessionChoice, next = config) =>
     run("连接设备", async () => {
       await flush();
-      setFallbackSource(null);
+      setFallback(null);
       setMcu(emptyPreview);
       setAndroid(emptyPreview);
       capturePath.current = null;
       setCapturePreviews({});
       try {
-        await api.Connect(next);
+        await api.Connect(next, session);
       } catch (e) {
         if (next.serialPort && next.androidSerial) {
           const message = String(e);
-          if (message.includes("Android 连接失败：")) setFallbackSource("mcu");
-          else if (message.includes("串口连接失败：")) setFallbackSource("android");
+          if (message.includes("Android 连接失败：")) setFallback({ source: "mcu", session });
+          else if (message.includes("串口连接失败：")) setFallback({ source: "android", session });
         }
         throw e;
       }
@@ -401,6 +408,11 @@ export default function App() {
       setOperationsTab("capture");
       focusTitle.current = true;
       await refreshRecords(next.outputDir);
+    });
+  const renameSession = (session: Session, title: string) =>
+    run("重命名会话", async () => {
+      await api.SaveSessionTitle(session.path, title);
+      await refreshRecords();
     });
   const disconnect = () =>
     run("断开连接", async () => {
@@ -466,7 +478,7 @@ export default function App() {
       }
     });
   const deleteSession = (path: string, fullOnly: boolean) =>
-    run(fullOnly ? "删除完整日志" : "删除会话", async () => {
+    run(fullOnly ? "删除完整日志" : "删除连接", async () => {
       await flush();
       try {
         await api.DeleteSessionLogs(path, fullOnly);
@@ -475,7 +487,7 @@ export default function App() {
         const remaining = items?.find((s) => s.path === path);
         if (items && (fullOnly ? !remaining?.full : !remaining)) {
           if (fullView?.path === path || (!fullOnly && sessions.find((s) => s.path === path)?.records.some((r) => r.path === viewRef.current?.path))) resetView();
-          setNotice(fullOnly ? "已删除完整日志" : "已删除会话");
+          setNotice(fullOnly ? "已删除完整日志" : "已删除连接");
         }
       }
     });
@@ -529,14 +541,14 @@ export default function App() {
   }, [mcuKey, androidKey]);
   useEffect(() => {
     const find = (event: KeyboardEvent) => {
-      if (!event.ctrlKey || event.altKey || event.metaKey || event.shiftKey || event.key.toLowerCase() !== "f") return;
+      if (sessionDialog || !event.ctrlKey || event.altKey || event.metaKey || event.shiftKey || event.key.toLowerCase() !== "f") return;
       event.preventDefault();
       const source = logLayout === "mcu" || logLayout === "android" ? logLayout : lastPane.current;
       (source === "mcu" ? mcuFind : androidFind).current?.click();
     };
     window.addEventListener("keydown", find, true);
     return () => window.removeEventListener("keydown", find, true);
-  }, [logLayout]);
+  }, [logLayout, sessionDialog]);
   const connectionSummary = currentDevices.serialPort && currentDevices.androidSerial
     ? `${currentDevices.serialPort} + ${currentDevices.androidSerial}`
     : currentDevices.serialPort ? `仅串口 · ${currentDevices.serialPort}`
@@ -567,7 +579,7 @@ export default function App() {
         <div className="sidebar-top">
           <div>
             <h2>
-              日志会话 <span>{sessions.length}</span>
+              日志会话 <span>{sessionGroups.size}</span>
             </h2>
           </div>
           <button
@@ -602,6 +614,7 @@ export default function App() {
           onRecord={(r) => run("打开记录", () => changeView(r))}
           onFull={openFull}
           onExport={exportRecords} onDeleteRecords={deleteRecords} onDeleteSession={deleteSession}
+          onRename={setSessionDialog}
           onOpenFolder={(path) => run("打开目录", () => api.OpenFolder(path))} />
         <div className="export-panel">
           <label title={!attachable.length ? "所选记录没有可导出的完整日志" : ""}>
@@ -717,15 +730,15 @@ export default function App() {
           <div className="error-banner">
             <AlertCircle size={16} />
             <span>{error || state.error}</span>
-            {error && fallbackSource && !state.connected && (
+            {error && fallback && !state.connected && (
               <button
                 className="secondary connection-fallback"
                 disabled={locked}
-                onClick={() => connect(fallbackSource === "mcu"
+                onClick={() => connect(fallback.session, fallback.source === "mcu"
                   ? { ...config, androidSerial: "" }
                   : { ...config, serialPort: "" })}
               >
-                {fallbackSource === "mcu" ? "仅连接串口" : "仅连接 Android"}
+                {fallback.source === "mcu" ? "仅连接串口" : "仅连接 Android"}
               </button>
             )}
             {error && (
@@ -1120,7 +1133,7 @@ export default function App() {
                       (!config.outputDir ||
                         (!config.serialPort && !config.androidSerial)))
                   }
-                  onClick={state.connected ? disconnect : () => connect()}
+                  onClick={state.connected ? disconnect : () => setSessionDialog("connect")}
                 >
                   <Radio size={16} />
                   {busy === "连接设备"
@@ -1243,6 +1256,14 @@ export default function App() {
           </section>
         </div>
       </aside>
+      {sessionDialog && <SessionDialog choices={sessionChoices}
+        renaming={sessionDialog === "connect" ? undefined : sessionDialog}
+        onCancel={() => setSessionDialog(null)}
+        onSubmit={(choice) => {
+          setSessionDialog(null);
+          if (sessionDialog === "connect") void connect(choice);
+          else void renameSession(sessionDialog, choice.title);
+        }} />}
     </div>
   );
 }
