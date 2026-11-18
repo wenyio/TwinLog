@@ -258,7 +258,7 @@ label {
 .session-toggle { justify-content: flex-start; min-height: 33px; padding: 0 4px; text-align: left; }
 .session-toggle > svg { flex: none; }
 .session-toggle > span:first-of-type { overflow: hidden; text-overflow: ellipsis; }
-.session-toggle > .session-writing { margin-left: auto; }
+.session-count { margin-left: auto; flex: none; color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .session-children { padding-left: 15px; }
 .connection-group + .connection-group { margin-top: 3px; border-top: 1px solid var(--divider); }
 .session-empty { display: block; padding: 6px; color: var(--text-muted); font-size: 11px; }

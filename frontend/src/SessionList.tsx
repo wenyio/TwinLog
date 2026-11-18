@@ -114,16 +114,17 @@ export default function SessionList({ sessions, selected, viewPath, state, locke
         const connected = state.connected && state.sessionDir === s.path;
         const writing = connected && !!s.full;
         const capturing = connected && state.capturing;
+        const count = s.records.length;
         const date = sessionStamp(s.startedAt);
         const short = shortTime(s);
         return <div className={nested ? "connection-group" : undefined} key={s.path}>
           <div className="session-row">
             <button className="session-toggle" type="button" aria-expanded={open}
-              title={date || short}
-              aria-label={`${date || short}${!open && (writing || capturing) ? "，写入中" : ""}`}
+              title={`${date || short} · ${count} 条记录`}
+              aria-label={`${date || short}，${count} 条记录${!open && (writing || capturing) ? "，写入中" : ""}`}
               onClick={() => setExpanded((prev) => ({ ...prev, [nested ? s.path : groupKey(s)]: !open }))}>
               {nested ? <Radio size={14} /> : open ? <FolderOpen size={16} /> : <Folder size={16} />}
-              <span>{short}</span>
+              <span>{short}</span><small className="session-count" title={`${count} 条记录`}>{count}</small>
               {!open && (writing || capturing) && <Writing label="写入中" />}
             </button>
             {trigger(s.path, (nested ? "连接操作 · " : "会话操作 · ") + (date || short), [
@@ -175,15 +176,16 @@ export default function SessionList({ sessions, selected, viewPath, state, locke
         if (connections.length === 1 && !latest.title)
           return <section className="session-group" key={key}>{renderConnection(latest, open, false)}</section>;
         const title = sessionLabel(latest);
+        const count = connections.reduce((sum, s) => sum + s.records.length, 0);
         const writing = key === activeGroup && (!!active?.full || state.capturing);
         return <section className="session-group" key={key}>
           <div className="session-row">
             <button className="session-toggle" type="button" aria-expanded={open}
-              title={title}
-              aria-label={`${title}${!open && writing ? "，写入中" : ""}`}
+              title={`${title} · ${connections.length} 次连接 · ${count} 条记录`}
+              aria-label={`${title}，${count} 条记录${!open && writing ? "，写入中" : ""}`}
               onClick={() => setExpanded((prev) => ({ ...prev, [key]: !open }))}>
               {open ? <FolderOpen size={16} /> : <Folder size={16} />}
-              <span>{title}</span>
+              <span>{title}</span><small className="session-count" title={`${count} 条记录`}>{count}</small>
               {!open && writing && <Writing label="写入中" />}
             </button>
             {trigger(key, "会话操作 · " + title, [rename(latest)])}

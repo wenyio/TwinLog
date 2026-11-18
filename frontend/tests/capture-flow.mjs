@@ -614,7 +614,7 @@ try {
         const previous = sessions.find((s) => s.path === choice.existingPath);
         previous.group ??= "test-group";
         const path = "test/reconnected";
-        sessions.unshift({ ...previous, path, startedAt: "2026-11-18T03:00:00Z", records: [], full: full(path) });
+        sessions.unshift({ ...previous, path, startedAt: "2026-11-18T03:00:00Z", records: [record(path + "/r1", "重连后记录")], full: full(path) });
         state.sessionDir = path;
         state.connected = true;
         window.emitHistoryEvent("state", state);
@@ -646,7 +646,9 @@ try {
   await groups.nth(1).waitFor();
   const activeSession = groups.first();
   const oldSession = groups.nth(1);
-  assert.equal(await historyPage.locator(".history-list .session-count").count(), 0);
+  assert.equal(await activeSession.locator(".session-count").textContent(), "0");
+  assert.equal(await activeSession.locator(".session-count").getAttribute("title"), "0 条记录");
+  assert.equal(await oldSession.locator(".session-count").textContent(), "2");
   const batch = historyPage.locator(".export-panel");
   const batchSelectAll = batch.getByRole("checkbox", { name: "全选记录", exact: true });
   const includeFull = batch.getByRole("checkbox", { name: "附带完整日志" });
@@ -664,6 +666,9 @@ try {
   assert.ok(await activeSession.locator(".full-row .session-writing").isVisible());
   await activeToggle.click();
   assert.ok(await activeToggle.locator(".session-writing").isVisible());
+  const countBox = await activeToggle.locator(".session-count").boundingBox();
+  const writingBox = await activeToggle.locator(".session-writing").boundingBox();
+  assert.ok(countBox.x + countBox.width <= writingBox.x, "writing indicator follows the count without overlap");
   assert.ok(await activeSession.locator(".full-row").isHidden());
   await activeToggle.click();
   const fullRow = activeSession.locator(".full-row");
@@ -761,7 +766,7 @@ try {
   await action("重命名会话").click();
   await renameDialog.getByRole("textbox", { name: "会话名称" }).fill("参数下发失败");
   await renameDialog.getByRole("button", { name: "保存", exact: true }).click();
-  const named = activeSession.getByRole("button", { name: "参数下发失败", exact: true });
+  const named = activeSession.getByRole("button", { name: "参数下发失败，0 条记录", exact: true });
   await named.waitFor();
   await historyPage.getByRole("tab", { name: "设备连接", exact: true }).click();
   await historyConnection.getByRole("button", { name: "断开连接", exact: true }).click();
@@ -775,6 +780,8 @@ try {
   const connections = activeSession.locator(".connection-group");
   await historyPage.waitForFunction(() => document.querySelectorAll(".connection-group").length === 2);
   assert.equal(await groups.count(), 1);
+  assert.equal(await activeSession.locator(":scope > .session-row .session-count").textContent(), "1");
+  assert.deepEqual(await connections.locator(":scope > .session-row .session-count").allTextContents(), ["1", "0"]);
   assert.ok(await connections.first().locator(".full-row .session-writing").isVisible());
   assert.equal(await connections.last().locator(".full-row .session-writing").count(), 0);
   if ((await connections.last().locator(".session-toggle").getAttribute("aria-expanded")) === "false") {
@@ -791,7 +798,7 @@ try {
   assert.equal(await renameDialog.getByRole("textbox", { name: "会话名称" }).inputValue(), "参数下发失败");
   await renameDialog.getByRole("textbox", { name: "会话名称" }).fill("复测同一问题");
   await renameDialog.getByRole("button", { name: "保存", exact: true }).click();
-  await activeSession.getByRole("button", { name: "复测同一问题", exact: true }).waitFor();
+  await activeSession.getByRole("button", { name: "复测同一问题，1 条记录", exact: true }).waitFor();
   assert.equal(await connections.count(), 2);
   await showMenu(connections.first().getByRole("button", { name: /连接操作/ }));
   assert.ok(await action("删除连接").isDisabled());
