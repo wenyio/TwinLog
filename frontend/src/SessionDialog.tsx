@@ -24,7 +24,7 @@ export default function SessionDialog({ choices, renaming, onCancel, onSubmit }:
     dialog.current?.close();
     onCancel();
   };
-  return <dialog ref={dialog} className="session-dialog" aria-labelledby="session-dialog-title"
+  return <dialog ref={dialog} className="app-dialog" aria-labelledby="session-dialog-title"
     onCancel={(event) => { event.preventDefault(); cancel(); }}>
     <form onSubmit={(event) => {
       event.preventDefault();
@@ -48,7 +48,7 @@ export default function SessionDialog({ choices, renaming, onCancel, onSubmit }:
         <input ref={(el) => { field.current = el; }} value={title} maxLength={100} placeholder="选填，留空按时间显示"
           onChange={(event) => setTitle(event.target.value)} />
       </label>}
-      <div className="session-dialog-actions">
+      <div className="app-dialog-actions">
         <button type="button" className="secondary" onClick={cancel}>取消</button>
         <button type="submit" className="primary" disabled={existing && !path}>
           {renaming ? <><Check size={16} />保存</> : <><Radio size={16} />连接</>}

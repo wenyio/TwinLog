@@ -329,7 +329,7 @@ label {
 .row-popover button:hover:not(:disabled) { background: var(--surface-selected); }
 .row-popover .menu-danger { color: #a13e32; }
 .row-popover .menu-danger:not(:first-child) { border-top: 1px solid var(--divider); }
-.session-dialog {
+.app-dialog {
   box-sizing: border-box;
   width: min(370px, calc(100% - 24px));
   max-height: calc(100% - 24px);
@@ -340,11 +340,12 @@ label {
   color: var(--text);
   box-shadow: 0 12px 34px #0003;
 }
-.session-dialog::backdrop { background: #0004; }
-.session-dialog form { display: grid; gap: 14px; }
-.session-dialog h2 { margin: 0; font-size: 16px; }
-.session-dialog label { display: grid; gap: 5px; min-width: 0; }
-.session-dialog :is(input, select) { width: 100%; min-width: 0; }
+.app-dialog::backdrop { background: #0004; }
+.app-dialog form { display: grid; gap: 14px; }
+.app-dialog h2 { margin: 0; font-size: 16px; }
+.app-dialog label { display: grid; gap: 5px; min-width: 0; }
+.app-dialog :is(input, select) { width: 100%; min-width: 0; }
+.dialog-error { color: #a13e32; overflow-wrap: anywhere; }
 .session-modes {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -355,7 +356,7 @@ label {
 }
 .session-modes button { min-height: 30px; }
 .session-modes button[aria-pressed="true"] { background: var(--surface); border-color: var(--border); }
-.session-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.app-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .batch-actions { display: flex; align-items: center; gap: 6px; margin-top: 9px; }
 .batch-actions .export { flex: 1; margin: 0; }
 .batch-actions .delete-records { flex: none; color: #a13e32; }

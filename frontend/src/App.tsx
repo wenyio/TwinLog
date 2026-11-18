@@ -3,6 +3,7 @@ import LogSplit from "./LogSplit";
 import LogPane, { emptyPreview, trimPreview } from "./LogPane";
 import SessionList, { groupSessions, recordTitle as displayTitle } from "./SessionList";
 import SessionDialog from "./SessionDialog";
+import BaudRateDialog, { baudRatePresets, customBaudRates, validBaudRate } from "./BaudRateDialog";
 import { version } from "../package.json";
 import {
   Activity,
@@ -98,6 +99,8 @@ export default function App() {
     [notes, setNotes] = useState(""),
     [advanced, setAdvanced] = useState(false);
   const [sessionDialog, setSessionDialog] = useState<"connect" | Session | null>(null);
+  const [baudRateDialog, setBaudRateDialog] = useState(false);
+  const [configLoaded, setConfigLoaded] = useState(false);
   const [busy, setBusy] = useState(""),
     [error, setError] = useState(""),
     [fallback, setFallback] = useState<{ source: LogSource; session: SessionChoice } | null>(null),
@@ -244,7 +247,9 @@ export default function App() {
       .GetConfig()
       .then(async (c) => {
         if (!alive) return;
-        setConfig({ ...defaults, ...c });
+        const baudRate = validBaudRate(c.baudRate) ? c.baudRate : defaults.baudRate;
+        setConfig({ ...defaults, ...c, baudRate, customBaudRates: customBaudRates([...(c.customBaudRates ?? []), baudRate]) });
+        setConfigLoaded(true);
         // Publish each result as it arrives; a slow scan or ADB query must
         // not hold up the other startup tasks.
         await Promise.allSettled([
@@ -311,6 +316,11 @@ export default function App() {
   const patch = (v: Partial<Config>) => {
     setFallback(null);
     setConfig((c) => ({ ...c, ...v }));
+  };
+  const saveBaudRate = async (baudRate: number) => {
+    const next = { ...config, baudRate, customBaudRates: customBaudRates([...(config.customBaudRates ?? []), baudRate]) };
+    await api.SaveConfig(next);
+    patch(next);
   };
   const changeView = async (r: RecordItem) => {
     await flush();
@@ -502,6 +512,7 @@ export default function App() {
     recordHistory = !!view && !live,
     history = recordHistory || !!fullView;
   const packageLocked = state.capturing || history || locked;
+  const baudRates = [...baudRatePresets, ...(config.customBaudRates ?? [])].sort((a, b) => a - b);
   const applyPackage = (pkg: string) => {
     if (!packageLocked && state.connected && pkg !== state.config.package) {
       return run("切换应用", async () => {
@@ -541,14 +552,14 @@ export default function App() {
   }, [mcuKey, androidKey]);
   useEffect(() => {
     const find = (event: KeyboardEvent) => {
-      if (sessionDialog || !event.ctrlKey || event.altKey || event.metaKey || event.shiftKey || event.key.toLowerCase() !== "f") return;
+      if (sessionDialog || baudRateDialog || !event.ctrlKey || event.altKey || event.metaKey || event.shiftKey || event.key.toLowerCase() !== "f") return;
       event.preventDefault();
       const source = logLayout === "mcu" || logLayout === "android" ? logLayout : lastPane.current;
       (source === "mcu" ? mcuFind : androidFind).current?.click();
     };
     window.addEventListener("keydown", find, true);
     return () => window.removeEventListener("keydown", find, true);
-  }, [logLayout, sessionDialog]);
+  }, [logLayout, sessionDialog, baudRateDialog]);
   const connectionSummary = currentDevices.serialPort && currentDevices.androidSerial
     ? `${currentDevices.serialPort} + ${currentDevices.androidSerial}`
     : currentDevices.serialPort ? `仅串口 · ${currentDevices.serialPort}`
@@ -1056,15 +1067,17 @@ export default function App() {
                 </label>
                 <label>
                   波特率
-                  <input
-                    type="number"
-                    min="1"
+                  <select
                     value={config.baudRate}
-                    disabled={!config.serialPort || state.connected || locked}
-                    onChange={(e) =>
-                      patch({ baudRate: Number(e.target.value) })
-                    }
-                  />
+                    disabled={!configLoaded || !config.serialPort || state.connected || locked}
+                    onChange={(e) => {
+                      if (e.target.value === "add") setBaudRateDialog(true);
+                      else patch({ baudRate: Number(e.target.value) });
+                    }}
+                  >
+                    {baudRates.map((rate) => <option key={rate} value={rate}>{rate}</option>)}
+                    <option value="add">新增波特率…</option>
+                  </select>
                 </label>
                 <label>
                   Android 设备
@@ -1256,6 +1269,7 @@ export default function App() {
           </section>
         </div>
       </aside>
+      {baudRateDialog && <BaudRateDialog onCancel={() => setBaudRateDialog(false)} onSave={saveBaudRate} />}
       {sessionDialog && <SessionDialog choices={sessionChoices}
         renaming={sessionDialog === "connect" ? undefined : sessionDialog}
         onCancel={() => setSessionDialog(null)}

@@ -1,19 +1,20 @@
 package capture
 
 type Config struct {
-	OutputDir     string `json:"outputDir"`
-	ADBPath       string `json:"adbPath"`
-	SerialPort    string `json:"serialPort"`
-	AndroidSerial string `json:"androidSerial"`
-	Package       string `json:"package"`
-	BaudRate      int    `json:"baudRate"`
-	DataBits      int    `json:"dataBits"`
-	StopBits      int    `json:"stopBits"`
-	Parity        string `json:"parity"`
-	DTR           bool   `json:"dtr"`
-	RTS           bool   `json:"rts"`
-	SaveFullLogs  bool   `json:"saveFullLogs"`
-	PreviewLines  int    `json:"previewLines"`
+	OutputDir       string `json:"outputDir"`
+	ADBPath         string `json:"adbPath"`
+	SerialPort      string `json:"serialPort"`
+	AndroidSerial   string `json:"androidSerial"`
+	Package         string `json:"package"`
+	BaudRate        int    `json:"baudRate"`
+	CustomBaudRates []int  `json:"customBaudRates,omitempty"`
+	DataBits        int    `json:"dataBits"`
+	StopBits        int    `json:"stopBits"`
+	Parity          string `json:"parity"`
+	DTR             bool   `json:"dtr"`
+	RTS             bool   `json:"rts"`
+	SaveFullLogs    bool   `json:"saveFullLogs"`
+	PreviewLines    int    `json:"previewLines"`
 }
 
 const DefaultPreviewLines = 2000

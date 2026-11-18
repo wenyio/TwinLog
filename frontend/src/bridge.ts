@@ -5,6 +5,7 @@ export interface Config {
   androidSerial: string;
   package: string;
   baudRate: number;
+  customBaudRates?: number[];
   dataBits: number;
   stopBits: number;
   parity: string;

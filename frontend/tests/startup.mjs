@@ -89,6 +89,77 @@ try {
     console.log("PASS: independent startup / " + scenario);
     await page.close();
   }
+
+  const page = await browser.newPage();
+  await page.addInitScript(() => {
+    const config = JSON.parse(localStorage.getItem("test-baud-config")) ?? {
+      outputDir: "test", adbPath: "adb", serialPort: "COM7", baudRate: 250000,
+    };
+    const handlers = {};
+    const state = { connected: false, capturing: false, sessionDir: "", activeRecord: null, config, error: "", mcuBytes: 0, androidBytes: 0 };
+    window.emitConnected = () => handlers.state({ ...state, connected: true });
+    window.go = { main: { App: {
+      GetConfig: async () => config,
+      GetState: async () => state,
+      ListPorts: async () => [{ name: "COM7", description: "测试串口" }],
+      ListDevices: async () => [],
+      ListSessions: async () => [],
+      SaveConfig: async (next) => {
+        if (window.failBaudSave) throw Error("模拟写入失败");
+        localStorage.setItem("test-baud-config", JSON.stringify(next));
+      },
+    } } };
+    window.runtime = { EventsOn: (name, handler) => { handlers[name] = handler; return () => {}; } };
+  });
+  await page.goto(url);
+  const baud = page.getByRole("combobox", { name: "波特率", exact: true });
+  const modal = page.getByRole("dialog", { name: "新增波特率", exact: true });
+  const entry = modal.getByRole("textbox", { name: "波特率", exact: true });
+  const save = modal.getByRole("button", { name: "保存", exact: true });
+  const options = () => baud.locator("option").evaluateAll((items) => items.map((opt) => opt.value));
+  const savedConfig = () => page.evaluate(() => JSON.parse(localStorage.getItem("test-baud-config")));
+  await baud.locator('option[value="250000"]').waitFor({ state: "attached" });
+  assert.equal(await baud.inputValue(), "250000");
+  assert.deepEqual(await options(), ["9600", "19200", "115200", "250000", "460800", "1500000", "add"]);
+  await baud.selectOption("1500000");
+  await baud.selectOption("add");
+  await entry.press("Escape");
+  await modal.waitFor({ state: "hidden" });
+  assert.equal(await baud.inputValue(), "1500000");
+  assert.equal(await savedConfig(), null);
+
+  await baud.selectOption("add");
+  for (const invalid of ["0", "1.5", "4294967296"]) {
+    await entry.fill(invalid);
+    await save.click();
+    await modal.getByRole("alert").getByText(/之间的整数/).waitFor();
+  }
+  assert.equal(await savedConfig(), null);
+  await entry.fill("921600");
+  await page.evaluate(() => { window.failBaudSave = true; });
+  await save.click();
+  await modal.getByRole("alert").getByText(/模拟写入失败/).waitFor();
+  assert.equal(await entry.inputValue(), "921600");
+  assert.equal(await savedConfig(), null);
+  await page.evaluate(() => { window.failBaudSave = false; });
+  await entry.press("Enter");
+  await modal.waitFor({ state: "hidden" });
+  assert.equal(await baud.inputValue(), "921600");
+  assert.deepEqual((await savedConfig()).customBaudRates, [250000, 921600]);
+
+  await page.reload();
+  await baud.locator('option[value="921600"]').waitFor({ state: "attached" });
+  assert.equal(await baud.inputValue(), "921600");
+  await baud.selectOption("add");
+  await entry.fill("250000");
+  await save.click();
+  await modal.waitFor({ state: "hidden" });
+  assert.equal(await baud.inputValue(), "250000");
+  assert.deepEqual(await options(), ["9600", "19200", "115200", "250000", "460800", "921600", "1500000", "add"]);
+  assert.deepEqual((await savedConfig()).customBaudRates, [250000, 921600]);
+  await page.evaluate(() => window.emitConnected());
+  await page.locator('select:disabled').and(baud).waitFor();
+  console.log("PASS: baud presets, legacy value, validation, retry, persistence and connection lock");
 } finally {
   await browser?.close();
   server.kill();
