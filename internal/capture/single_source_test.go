@@ -104,7 +104,7 @@ func TestSingleSourceSession(t *testing.T) {
 				if _, err := m.StopCapture(); err != nil {
 					t.Fatal(err)
 				}
-				logs, err := m.ReadRecordLogs(r.Path)
+				logs, err := m.ReadRecordLogs(r.Path, 0)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -149,7 +149,7 @@ func TestSingleSourceSession(t *testing.T) {
 				if err := os.Remove(filepath.Join(r.Path, source+".log")); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := m.ReadRecordLogs(r.Path); err == nil {
+				if _, err := m.ReadRecordLogs(r.Path, 0); err == nil {
 					t.Fatal("missing active log should still be an error")
 				}
 			})

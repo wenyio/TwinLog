@@ -44,6 +44,7 @@ func loadConfig(settings, outputDir string) capture.Config {
 	if b, e := os.ReadFile(settings); e == nil {
 		_ = json.Unmarshal(b, &c)
 	}
+	c.PreviewLines = capture.NormalizePreviewLines(c.PreviewLines)
 	return c
 }
 func (a *App) startup(ctx context.Context) { a.ctx = ctx }
@@ -116,6 +117,7 @@ func (a *App) GetConfig() capture.Config    { a.mu.Lock(); defer a.mu.Unlock(); 
 func (a *App) SaveConfig(c capture.Config) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	c.PreviewLines = capture.NormalizePreviewLines(c.PreviewLines)
 	if e := os.MkdirAll(filepath.Dir(a.settings), 0755); e != nil {
 		return e
 	}
@@ -164,7 +166,7 @@ func (a *App) SaveNotes(path, notes string) error                { return a.mana
 func (a *App) SaveTitle(path, title string) error                { return a.manager.SaveTitle(path, title) }
 func (a *App) ListRecords(root string) ([]capture.Record, error) { return a.manager.ListRecords(root) }
 func (a *App) ReadRecordLogs(path string) (capture.RecordLogs, error) {
-	return a.manager.ReadRecordLogs(path)
+	return a.manager.ReadRecordLogs(path, a.GetConfig().PreviewLines)
 }
 func (a *App) DeleteRecords(paths []string) (string, error) {
 	answer, err := wruntime.MessageDialog(a.ctx, wruntime.MessageDialogOptions{

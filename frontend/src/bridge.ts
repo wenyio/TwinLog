@@ -11,6 +11,7 @@ export interface Config {
   dtr: boolean;
   rts: boolean;
   saveFullLogs: boolean;
+  previewLines: number;
 }
 export type LogSource = "mcu" | "android";
 
@@ -68,6 +69,7 @@ export const defaults: Config = {
   dtr: false,
   rts: false,
   saveFullLogs: true,
+  previewLines: 2000,
 };
 type Backend = {
   ConfirmClose(ok: boolean): Promise<void>;

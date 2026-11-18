@@ -27,3 +27,21 @@ func TestSaveFullLogsConfigDefaultAndPersistence(t *testing.T) {
 		t.Fatalf("settings did not round-trip: %+v", reloaded)
 	}
 }
+
+func TestPreviewLinesConfig(t *testing.T) {
+	settings := filepath.Join(t.TempDir(), "settings.json")
+	if c := loadConfig(settings, "default"); c.PreviewLines != 2000 {
+		t.Fatalf("default preview lines = %d", c.PreviewLines)
+	}
+	a := &App{settings: settings}
+	for _, test := range []struct{ input, want int }{{5000, 5000}, {10000, 10000}, {-1, 2000}} {
+		c := a.GetConfig()
+		c.PreviewLines = test.input
+		if err := a.SaveConfig(c); err != nil {
+			t.Fatal(err)
+		}
+		if got := loadConfig(settings, "default").PreviewLines; got != test.want {
+			t.Fatalf("saved %d lines, got %d; want %d", test.input, got, test.want)
+		}
+	}
+}

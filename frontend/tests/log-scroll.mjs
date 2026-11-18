@@ -24,6 +24,7 @@ try {
       const config = { outputDir: "test", adbPath: "adb", serialPort: "COM1", androidSerial: "test", package: "", baudRate: 115200, dataBits: 8, stopBits: 1, parity: "none", dtr: false, rts: false };
       window.go = { main: { App: {
         GetConfig: async () => config,
+        SaveConfig: async (next) => { Object.assign(config, next); window.savedPreviewLines = next.previewLines; },
         GetState: async () => ({ connected: false, capturing: false, sessionDir: "", activeRecord: null, config, error: "", mcuBytes: 0, androidBytes: 0 }),
         ListRecords: async () => [], ListPorts: async () => [], ListDevices: async () => [],
       } } };
@@ -83,6 +84,45 @@ try {
     await page.evaluate(() => { window.testLogs("mcu", 6000, 10); window.testLogs("android", 6000, 10); });
     await page.waitForFunction(() => document.querySelectorAll(".log-pane pre")[1].textContent.includes("line 6009"));
     assert.equal(await panes.first().locator("pre").textContent(), mcuFrozen);
+    if (height === 720) {
+      await page.getByRole("button", { name: "更多设置" }).click();
+      const lineSetting = page.getByRole("combobox", { name: "预览行数" });
+      assert.equal(await lineSetting.inputValue(), "2000");
+      await lineSetting.selectOption("5000");
+      await page.waitForFunction(() => window.savedPreviewLines === 5000 && !document.querySelector('.preview-lines-setting select').disabled);
+      const pane = panes.nth(1), pre = pane.locator("pre");
+      const clear = pane.getByRole("button", { name: "清空预览" });
+      assert.equal(await clear.locator(".lucide-eraser").count(), 1);
+      await clear.click();
+      await page.evaluate(() => window.testLogs("android", 0, 5200));
+      await pane.getByText("仅显示末尾 5000 行", { exact: true }).waitFor();
+      assert.ok((await pre.textContent()).startsWith("android line 200\n"));
+      await pre.focus();
+      await page.keyboard.press("Control+f");
+      const search = pane.getByRole("textbox", { name: "搜索当前预览" });
+      await search.fill("AndRoId line 201");
+      await pane.getByText("1 / 11", { exact: true }).waitFor();
+      const highlighted = () => page.evaluate(() => [...CSS.highlights.get("log-match")][0].toString());
+      assert.equal(await highlighted(), "android line 201");
+      await search.press("Enter");
+      await pane.getByText("2 / 11", { exact: true }).waitFor();
+      await search.press("Shift+Enter");
+      await pane.getByText("1 / 11", { exact: true }).waitFor();
+      const snapshot = await pre.textContent();
+      await page.evaluate(() => window.testLogs("android", 5200, 5500));
+      await pane.getByText("1 / 11", { exact: true }).waitFor();
+      assert.equal(await pre.textContent(), snapshot);
+      await search.press("Escape");
+      assert.equal(await search.count(), 0);
+      assert.equal(await pre.textContent(), snapshot);
+      await pane.getByRole("button", { name: "回到最新" }).click();
+      await page.waitForFunction(() => document.querySelectorAll(".log-pane pre")[1].textContent.endsWith("line 10699\n"));
+      assert.ok(!(await pre.textContent()).includes("android line 201\n"));
+      await page.getByRole("button", { name: "MCU", exact: true }).click();
+      await page.keyboard.press("Control+f");
+      await panes.first().getByRole("textbox", { name: "搜索当前预览" }).waitFor();
+      await page.keyboard.press("Escape");
+    }
     await page.close();
     console.log("PASS: both panes scroll pause, return to latest/bottom, manual pause, eviction, clear and independence at height " + height);
   }

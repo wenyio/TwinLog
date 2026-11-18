@@ -623,6 +623,38 @@ h1 {
 .log-pane strong {
   font-size: 12px;
 }
+.log-search {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--divider);
+  background: var(--surface-subtle);
+  flex-shrink: 0;
+}
+.log-search input {
+  flex: 1 1 90px;
+  min-width: 0;
+  height: 28px;
+}
+.log-search output {
+  flex: 1 0 48px;
+  text-align: right;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.log-search .icon {
+  flex: 0 0 27px;
+  width: 27px;
+  height: 27px;
+}
+::highlight(log-match) {
+  background-color: #f6ce67;
+  color: #282111;
+}
 .source-dot {
   width: 6px;
   height: 6px;
@@ -1219,6 +1251,9 @@ main {
 .advanced > .full-logs-setting {
   grid-column: 1 / -1;
   justify-content: flex-start;
+}
+.advanced > .preview-lines-setting {
+  grid-column: 1 / -1;
 }
 .error-banner {
   margin-bottom: 9px;

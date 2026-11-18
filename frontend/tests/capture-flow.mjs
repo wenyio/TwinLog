@@ -274,7 +274,16 @@ try {
     assert.ok(banner && button);
     assert.ok(Math.abs((button.y - banner.y) - (banner.height - button.height) / 2) <= 1);
   };
-  assert.equal(await historyBanner.locator("small").textContent(), "仅预览末尾最多 2000 行 / 256 KB，全文请打开记录目录");
+  assert.equal(await historyBanner.locator("small").textContent(), "仅预览日志末尾，全文请打开记录目录");
+  const historyPanes = page.locator(".log-pane");
+  assert.equal(await historyPanes.getByRole("button", { name: "清空预览" }).count(), 0);
+  await historyPanes.nth(1).locator("pre").focus();
+  await page.keyboard.press("Control+f");
+  const historySearch = historyPanes.nth(1).getByRole("textbox", { name: "搜索当前预览" });
+  await historySearch.fill("android 历史内容");
+  await historyPanes.nth(1).getByText("1 / 1", { exact: true }).waitFor();
+  await historySearch.press("Escape");
+  assert.equal(await historySearch.count(), 0);
   await assertReturnCentered();
   await page.evaluate(() => window.sendLogs());
   assert.ok(!(await page.locator(".log-pane pre").first().textContent()).includes("MCU 保留日志"));

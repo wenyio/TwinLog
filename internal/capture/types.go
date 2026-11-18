@@ -13,6 +13,18 @@ type Config struct {
 	DTR           bool   `json:"dtr"`
 	RTS           bool   `json:"rts"`
 	SaveFullLogs  bool   `json:"saveFullLogs"`
+	PreviewLines  int    `json:"previewLines"`
+}
+
+const DefaultPreviewLines = 2000
+
+func NormalizePreviewLines(lines int) int {
+	switch lines {
+	case 1000, 2000, 5000, 10000:
+		return lines
+	default:
+		return DefaultPreviewLines
+	}
 }
 
 func (c Config) singleSource() string {

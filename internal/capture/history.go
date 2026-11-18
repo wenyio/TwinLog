@@ -1,6 +1,7 @@
 package capture
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -9,8 +10,7 @@ import (
 	"unicode/utf8"
 )
 
-const previewBytes = 256 * 1024
-const previewLines = 2000
+const previewBytes = 2 * 1024 * 1024
 
 type LogPreview struct {
 	Text      string `json:"text"`
@@ -24,7 +24,7 @@ type RecordLogs struct {
 }
 
 // Read only a bounded tail; never load an entire historical log into memory.
-func readLogPreview(path string) (LogPreview, error) {
+func readLogPreview(path string, lines int) (LogPreview, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return LogPreview{}, err
@@ -37,14 +37,15 @@ func readLogPreview(path string) (LogPreview, error) {
 	p := LogPreview{Bytes: st.Size()}
 	start := max(int64(0), st.Size()-previewBytes)
 	b := make([]byte, st.Size()-start)
-	_, err = f.ReadAt(b, start)
+	n, err := f.ReadAt(b, start)
 	if err != nil && err != io.EOF {
 		return p, err
 	}
+	b = b[:n]
 	p.Truncated = start > 0
 	if start > 0 {
 		// Prefer whole lines, but still show the tail of a single very long line.
-		if i := strings.IndexByte(string(b), '\n'); i >= 0 && i < len(b)-1 {
+		if i := bytes.IndexByte(b, '\n'); i >= 0 && i < len(b)-1 {
 			b = b[i+1:]
 		} else {
 			for len(b) > 0 && !utf8.RuneStart(b[0]) {
@@ -52,33 +53,39 @@ func readLogPreview(path string) (LogPreview, error) {
 			}
 		}
 	}
-	text := strings.ToValidUTF8(string(b), "�")
-	lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n")
-	if len(lines) > previewLines {
-		text = strings.Join(lines[len(lines)-previewLines:], "\n")
-		if len(b) > 0 && b[len(b)-1] == '\n' {
-			text += "\n"
-		}
-		p.Truncated = true
+	end := len(b)
+	if end > 0 && b[end-1] == '\n' {
+		end--
 	}
-	p.Text = text
+	for i := 0; i < lines; i++ {
+		end = bytes.LastIndexByte(b[:end], '\n')
+		if end < 0 {
+			break
+		}
+		if i == lines-1 {
+			b = b[end+1:]
+			p.Truncated = true
+		}
+	}
+	p.Text = strings.ToValidUTF8(string(b), "�")
 	return p, nil
 }
 
-func (m *Manager) ReadRecordLogs(path string) (RecordLogs, error) {
+func (m *Manager) ReadRecordLogs(path string, lines int) (RecordLogs, error) {
 	r, err := loadRecord(path)
 	if err != nil {
 		return RecordLogs{}, err
 	}
 	var logs RecordLogs
+	lines = NormalizePreviewLines(lines)
 	if r.Source != "android" {
-		logs.MCU, err = readLogPreview(filepath.Join(path, "mcu.log"))
+		logs.MCU, err = readLogPreview(filepath.Join(path, "mcu.log"), lines)
 		if err != nil {
 			return RecordLogs{}, fmt.Errorf("读取 MCU 日志: %w", err)
 		}
 	}
 	if r.Source != "mcu" {
-		logs.Android, err = readLogPreview(filepath.Join(path, "android.log"))
+		logs.Android, err = readLogPreview(filepath.Join(path, "android.log"), lines)
 		if err != nil {
 			return RecordLogs{}, fmt.Errorf("读取 Android 日志: %w", err)
 		}

@@ -98,7 +98,7 @@ func TestHistoryLogPreview(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(p, "android.log"), []byte(text.String()), 0644); err != nil {
 		t.Fatal(err)
 	}
-	logs, err := m.ReadRecordLogs(p)
+	logs, err := m.ReadRecordLogs(p, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,18 +108,28 @@ func TestHistoryLogPreview(t *testing.T) {
 	if !logs.Android.Truncated || logs.Android.Bytes != int64(text.Len()) || !strings.HasPrefix(logs.Android.Text, "第 1500 行日志") || !strings.HasSuffix(logs.Android.Text, "第 3499 行日志\r\n") {
 		t.Fatal("line-limited preview did not preserve the expected tail")
 	}
+	for _, size := range []int{1000, 5000, 10000} {
+		logs, err := m.ReadRecordLogs(p, size)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantStart := fmt.Sprintf("第 %04d 行日志", max(0, 3500-size))
+		if !strings.HasPrefix(logs.Android.Text, wantStart) || logs.Android.Truncated != (size < 3500) {
+			t.Fatalf("unexpected %d-line preview", size)
+		}
+	}
 	long := strings.Repeat("串口", previewBytes)
 	if err := os.WriteFile(filepath.Join(p, "mcu.log"), []byte(long), 0644); err != nil {
 		t.Fatal(err)
 	}
-	logs, err = m.ReadRecordLogs(p)
+	logs, err = m.ReadRecordLogs(p, 10000)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !logs.MCU.Truncated || len(logs.MCU.Text) > previewBytes || !utf8.ValidString(logs.MCU.Text) || strings.ContainsRune(logs.MCU.Text, '�') {
 		t.Fatal("unbounded or broken UTF-8 preview")
 	}
-	if _, err := m.ReadRecordLogs(filepath.Dir(p)); err == nil {
+	if _, err := m.ReadRecordLogs(filepath.Dir(p), 0); err == nil {
 		t.Fatal("accepted non-record folder")
 	}
 }
@@ -160,7 +170,7 @@ func TestTrashRecordsPreservesLogsAndSkipsListing(t *testing.T) {
 		if err != nil || r.Notes != "保留内容\n" {
 			t.Fatalf("notes not retained: %+v %v", r, err)
 		}
-		logs, err := m.ReadRecordLogs(path)
+		logs, err := m.ReadRecordLogs(path, 0)
 		if err != nil || logs.MCU.Text != "保留内容\n" || logs.Android.Text != "保留内容\n" {
 			t.Fatal("logs not retained", err)
 		}

@@ -1,5 +1,6 @@
-import { useState, useEffect, useLayoutEffect, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import LogSplit from "./LogSplit";
+import LogPane, { emptyPreview, trimPreview } from "./LogPane";
 import { version } from "../package.json";
 import {
   Activity,
@@ -7,11 +8,9 @@ import {
   FolderOpen,
   RefreshCw,
   Play,
-  ArrowDownToLine,
   Square,
   Download,
   Plus,
-  Pause,
   Trash2,
   Settings2,
   FileText,
@@ -70,71 +69,6 @@ function loadLayout() {
     return { left: true, right: true, mode: "columns" as LogLayout };
   }
 }
-const cut = (s: string) => s.slice(-300000).split("\n").slice(-2000).join("\n");
-function LogPane({
-  source,
-  text,
-  clear,
-  visible,
-  historical = false,
-}: {
-  source: string;
-  text: string;
-  clear: () => void;
-  visible: boolean;
-  historical?: boolean;
-}) {
-  const [pause, setPause] = useState<{ reason: "manual" | "scroll"; text: string } | null>(null);
-  const pre = useRef<HTMLPreElement>(null);
-  const displayedText = pause?.text ?? text;
-  useLayoutEffect(() => {
-    if (visible && !pause && pre.current)
-      pre.current.scrollTop = pre.current.scrollHeight;
-  }, [displayedText, pause, visible]);
-  const clearPreview = () => {
-    setPause((value) => value && { ...value, text: "" });
-    clear();
-    if (pre.current) pre.current.scrollTop = 0;
-  };
-  return (
-    <section className="log-pane" hidden={!visible}>
-      <header>
-        <span className={"source-dot " + source} />
-        <strong>{source === "mcu" ? "MCU 串口" : "Android Logcat"}</strong>
-        <div className="grow" />
-        {!historical && <button
-          className={"icon " + (pause ? "toggled" : "")}
-          title={pause ? "回到最新" : "暂停自动滚动，固定当前预览"}
-          aria-label={pause ? "回到最新" : "暂停自动滚动"}
-          onClick={() => setPause(pause ? null : { reason: "manual", text })}
-        >
-          {pause ? <ArrowDownToLine size={15} /> : <Pause size={14} />}
-        </button>}
-        <button
-          className="icon"
-          title="清空预览，不影响保存"
-          onClick={clearPreview}
-        >
-          <Trash2 size={14} />
-        </button>
-      </header>
-      <pre ref={pre} tabIndex={0} onScroll={(event) => {
-        if (historical || !visible || pause?.reason === "manual") return;
-        const { scrollHeight, scrollTop, clientHeight } = event.currentTarget;
-        if (scrollHeight <= clientHeight) return;
-        const atBottom = scrollHeight - clientHeight - scrollTop <= 2;
-        if (!pause && !atBottom) setPause({ reason: "scroll", text });
-        else if (pause && atBottom) setPause(null);
-      }}>
-        {displayedText || (
-          <span className="log-empty">
-            {historical ? "该记录暂无日志内容" : source === "mcu" ? "等待串口数据…" : "等待 Android 日志…"}
-          </span>
-        )}
-      </pre>
-    </section>
-  );
-}
 export default function App() {
   const [operationsTab, setOperationsTab] = useState<"capture" | "connection">(
     "connection",
@@ -164,9 +98,21 @@ export default function App() {
     [fallbackSource, setFallbackSource] = useState<LogSource | null>(null),
     [notice, setNotice] = useState(""),
     [includeFull, setIncludeFull] = useState(false),
-    [mcu, setMcu] = useState(""),
-    [android, setAndroid] = useState(""),
+    [mcu, setMcu] = useState(emptyPreview),
+    [android, setAndroid] = useState(emptyPreview),
+    [androidPreviewKey, setAndroidPreviewKey] = useState(0),
+    [searchPane, setSearchPane] = useState<string | null>(null),
     [saveStatus, setSaveStatus] = useState<"saved" | "pending" | "failed">("saved");
+  const lastPane = useRef<LogSource>("mcu");
+  const mcuFind = useRef<HTMLButtonElement>(null);
+  const androidFind = useRef<HTMLButtonElement>(null);
+  const previewLines = useRef(config.previewLines);
+  useEffect(() => {
+    const lines = config.previewLines;
+    previewLines.current = lines;
+    setMcu((value) => trimPreview(value.text, lines, value.truncated));
+    setAndroid((value) => trimPreview(value.text, lines, value.truncated));
+  }, [config.previewLines]);
   const pending = useRef<({ path: string } & Partial<RecordFields>) | null>(null),
     draft = useRef({ title: "", notes: "" }),
     titleInput = useRef<HTMLInputElement>(null),
@@ -308,8 +254,9 @@ export default function App() {
       off2 = window.runtime?.EventsOn(
         "logs",
         (b: { source: string; text: string }) => {
-          if (b.source === "mcu") setMcu((s) => cut(s + b.text));
-          else setAndroid((s) => cut(s + b.text));
+          const lines = previewLines.current;
+          const update = b.source === "mcu" ? setMcu : setAndroid;
+          update((previous) => trimPreview(previous.text + b.text, lines, previous.truncated));
         },
       ),
       off3 = window.runtime?.EventsOn("error", (s: string) => setError(s));
@@ -381,8 +328,8 @@ export default function App() {
     run("连接设备", async () => {
       await flush();
       setFallbackSource(null);
-      setMcu("");
-      setAndroid("");
+      setMcu(emptyPreview);
+      setAndroid(emptyPreview);
       try {
         await api.Connect(next);
       } catch (e) {
@@ -476,7 +423,7 @@ export default function App() {
   const historyHint = !recordLogs
     ? "日志未加载，可重新点击记录重试"
     : recordLogs.mcu.truncated || recordLogs.android.truncated
-      ? "仅预览末尾最多 2000 行 / 256 KB，全文请打开记录目录"
+      ? "仅预览日志末尾，全文请打开记录目录"
       : null;
   const savingFullLogs = state.config.saveFullLogs !== false;
   const currentDevices = state.connected ? state.config : config;
@@ -484,6 +431,22 @@ export default function App() {
     ? (currentDevices.androidSerial ? undefined : "mcu")
     : (currentDevices.androidSerial ? "android" : undefined);
   const logLayout = singleSource ?? layout.mode;
+  const previewKey = history ? `record:${view.path}` : `live:${state.sessionDir}`;
+  const mcuKey = `${previewKey}/mcu`;
+  const androidKey = `${previewKey}/android/${history ? 0 : androidPreviewKey}`;
+  useEffect(() => {
+    setSearchPane(null);
+  }, [mcuKey, androidKey, logLayout]);
+  useEffect(() => {
+    const find = (event: KeyboardEvent) => {
+      if (!event.ctrlKey || event.altKey || event.metaKey || event.shiftKey || event.key.toLowerCase() !== "f") return;
+      event.preventDefault();
+      const source = logLayout === "mcu" || logLayout === "android" ? logLayout : lastPane.current;
+      (source === "mcu" ? mcuFind : androidFind).current?.click();
+    };
+    window.addEventListener("keydown", find, true);
+    return () => window.removeEventListener("keydown", find, true);
+  }, [logLayout]);
   const connectionSummary = currentDevices.serialPort && currentDevices.androidSerial
     ? `${currentDevices.serialPort} + ${currentDevices.androidSerial}`
     : currentDevices.serialPort ? `仅串口 · ${currentDevices.serialPort}`
@@ -743,20 +706,28 @@ export default function App() {
         )}
         <LogSplit mode={logLayout}>
           {singleSource !== "android" && <LogPane
-            key={(history ? view.path : state.sessionDir) + "/mcu"}
+            key={mcuKey}
             source="mcu"
             historical={history}
-            text={history ? recordLogs?.mcu.text || "" : mcu}
-            clear={() => history ? setRecordLogs((logs) => logs && ({ ...logs, mcu: { ...logs.mcu, text: "" } })) : setMcu("")}
+            preview={history ? recordLogs?.mcu ?? emptyPreview : mcu}
+            clear={() => setMcu(emptyPreview)}
             visible={logLayout !== "android"}
+            findRef={mcuFind}
+            activate={() => { lastPane.current = "mcu"; }}
+            searchOpen={searchPane === mcuKey}
+            setSearchOpen={(open) => setSearchPane(open ? mcuKey : null)}
           />}
           {singleSource !== "mcu" && <LogPane
-            key={(history ? view.path : state.sessionDir) + "/android"}
+            key={androidKey}
             source="android"
             historical={history}
-            text={history ? recordLogs?.android.text || "" : android}
-            clear={() => history ? setRecordLogs((logs) => logs && ({ ...logs, android: { ...logs.android, text: "" } })) : setAndroid("")}
+            preview={history ? recordLogs?.android ?? emptyPreview : android}
+            clear={() => setAndroid(emptyPreview)}
             visible={logLayout !== "mcu"}
+            findRef={androidFind}
+            activate={() => { lastPane.current = "android"; }}
+            searchOpen={searchPane === androidKey}
+            setSearchOpen={(open) => setSearchPane(open ? androidKey : null)}
           />}
         </LogSplit>
         <footer className="statusbar">
@@ -901,7 +872,8 @@ export default function App() {
                   )
                     run("切换应用", async () => {
                       await api.SetPackage(config.package);
-                      setAndroid("");
+                      setAndroid(emptyPreview);
+                      setAndroidPreviewKey((key) => key + 1);
                     });
                 }}
               />
@@ -1186,6 +1158,18 @@ export default function App() {
                       }}
                     />
                     保存完整日志
+                  </label>
+                  <label className="preview-lines-setting">
+                    预览行数
+                    <select value={config.previewLines} disabled={locked} onChange={(e) => {
+                      const next = { ...config, previewLines: Number(e.target.value) };
+                      run("保存设置", async () => {
+                        await api.SaveConfig(next);
+                        setConfig(next);
+                      });
+                    }}>
+                      {[1000, 2000, 5000, 10000].map((lines) => <option key={lines} value={lines}>{lines} 行</option>)}
+                    </select>
                   </label>
                 </div>
               )}
