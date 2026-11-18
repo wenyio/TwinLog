@@ -572,7 +572,7 @@ export default function App() {
                   }
                 />
                 <button
-                  title="查看该记录"
+                  title={displayTitle(r.title)}
                   aria-current={view?.path === r.path ? "page" : undefined}
                   onClick={() => run("打开记录", async () => changeView(r))}
                   disabled={state.capturing || locked}

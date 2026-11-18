@@ -286,8 +286,13 @@ label {
   width: 100%;
 }
 .history-row strong {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  max-width: 100%;
+  overflow: hidden;
+  overflow-wrap: anywhere;
   font-size: 12px;
-  word-break: break-all;
   font-weight: 600;
 }
 .history-row span {
