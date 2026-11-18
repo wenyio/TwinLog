@@ -85,18 +85,27 @@ try {
       failRead: false,
       deleteApproved: false,
       deleted: [],
+      configSaves: [],
+      connectConfigs: [],
     };
     window.go = {
       main: {
         App: {
           GetConfig: async () => config,
+          SaveConfig: async (next) => {
+            window.calls.configSaves.push(structuredClone(next));
+            Object.assign(config, next);
+          },
           GetState: async () => structuredClone(state),
           ListRecords: async () => structuredClone(records),
           ReadRecordLogs: async (path) => {
             if (window.calls.failRead) throw Error("模拟日志读取失败");
+            const source = records.find((r) => r.path === path)?.source;
             return {
-              mcu: { text: path + " MCU 历史内容\n", bytes: 600000, truncated: true },
-              android: { text: path + " Android 历史内容\n", bytes: 90, truncated: false },
+              mcu: source === "android" ? { text: "", bytes: 0, truncated: false }
+                : { text: path + " MCU 历史内容\n", bytes: path === "test/old" ? 600000 : 90, truncated: path === "test/old" },
+              android: source === "mcu" ? { text: "", bytes: 0, truncated: false }
+                : { text: path + " Android 历史内容\n", bytes: 90, truncated: false },
             };
           },
           DeleteRecords: async (paths) => {
@@ -107,10 +116,13 @@ try {
             }
             return "test/.twinlog-trash/batch";
           },
-          ListPorts: async () => [],
-          ListDevices: async () => [],
-          Connect: async () => {
+          ListPorts: async () => [{ name: "COM1", description: "" }],
+          ListDevices: async () => [{ serial: "test", state: "device", model: "Test Android" }],
+          Connect: async (next) => {
             if (window.calls.failConnect) throw Error("模拟连接失败");
+            window.calls.connectConfigs.push(structuredClone(next));
+            if (window.calls.androidUnavailable && next.androidSerial) throw Error("Android 连接失败：设备离线");
+            state.config = next;
             state.connected = true;
             emit("state");
           },
@@ -127,6 +139,7 @@ try {
               title,
               notes,
               package: "",
+              source: state.config.serialPort ? (state.config.androidSerial ? undefined : "mcu") : "android",
               startedAt: "2026-11-17T02:00:00Z",
               endedAt: "",
             };
@@ -169,17 +182,19 @@ try {
   const capture = page.getByRole("tabpanel", { name: "抓取", exact: true });
   const title = page.getByRole("textbox", { name: "抓取标题", exact: true });
   const notes = page.getByPlaceholder("输入备注", { exact: true });
-  const newCapture = () =>
-    page
-      .locator(".sidebar")
-      .getByRole("button", { name: "新建抓取", exact: true });
-  await newCapture().click();
+  const newCapture = capture.getByRole("button", { name: "新建抓取", exact: true });
   const connection = page.getByRole("tabpanel", {
     name: "设备连接",
     exact: true,
   });
-  assert.ok(await connection.isVisible());
+  await page.getByRole("button", { name: "展开操作栏", exact: true }).click();
+  await connection.waitFor();
   assert.equal(await capture.isVisible(), false);
+  await connection.getByRole("button", { name: "更多设置" }).click();
+  const fullLogs = connection.getByRole("checkbox", { name: "保存完整日志" });
+  assert.equal(await fullLogs.isChecked(), true, "legacy settings must default to enabled");
+  await fullLogs.uncheck();
+  await page.waitForFunction(() => window.calls.configSaves.at(-1)?.saveFullLogs === false);
   await page.evaluate(() => (window.calls.failConnect = true));
   await connection
     .getByRole("button", { name: "连接设备", exact: true })
@@ -192,6 +207,8 @@ try {
     .getByRole("button", { name: "连接设备", exact: true })
     .click();
   await title.waitFor();
+  await page.getByText("已连接 · 未保存完整日志", { exact: true }).waitFor();
+  assert.equal(await page.evaluate(() => window.calls.connectConfigs.at(-1).saveFullLogs), false);
   await page.waitForFunction(
     () => document.activeElement?.getAttribute("aria-label") === "抓取标题",
   );
@@ -204,20 +221,23 @@ try {
   await title.fill("未开始草稿");
   await notes.fill("草稿备注");
   await page.evaluate(() => window.sendLogs());
-  await newCapture().click();
-  assert.equal(await title.inputValue(), "未开始草稿");
-  assert.equal(await notes.inputValue(), "草稿备注");
+  assert.equal(await newCapture.count(), 0);
   assert.equal(await page.evaluate(() => window.calls.start), 0);
   await page.getByRole("tab", { name: "设备连接", exact: true }).click();
+  assert.equal(await fullLogs.isChecked(), false);
+  assert.ok(await fullLogs.isDisabled());
   await page.getByRole("button", { name: "断开连接", exact: true }).click();
-  await page.getByRole("button", { name: "收起操作栏", exact: true }).click();
-  await newCapture().click();
+  await fullLogs.check();
+  await page.waitForFunction(() => window.calls.configSaves.at(-1)?.saveFullLogs === true);
+  await page.locator(".history-row button").first().click();
+  await newCapture.click();
   assert.ok(await connection.isVisible());
   assert.equal(await capture.isVisible(), false);
   await connection
     .getByRole("button", { name: "连接设备", exact: true })
     .click();
   await title.waitFor();
+  await page.getByText("已连接 · 全量记录中", { exact: true }).waitFor();
   await page.waitForFunction(
     () => document.activeElement?.getAttribute("aria-label") === "抓取标题",
   );
@@ -227,7 +247,9 @@ try {
   assert.equal(await title.inputValue(), "旧记录");
   await page.getByText("test/old MCU 历史内容", { exact: false }).waitFor();
   assert.ok(await page.getByText("test/old Android 历史内容", { exact: false }).isVisible());
-  assert.ok(await page.getByText("仅预览末尾最多 2000 行 / 256 KB，全文请打开记录目录", { exact: true }).isVisible());
+  const historyBanner = page.locator(".history-banner");
+  const returnToLive = historyBanner.getByRole("button", { name: "返回实时", exact: true });
+  assert.equal(await historyBanner.locator("small").textContent(), "仅预览末尾最多 2000 行 / 256 KB，全文请打开记录目录");
   await page.evaluate(() => window.sendLogs());
   assert.ok(!(await page.locator(".log-pane pre").first().textContent()).includes("MCU 保留日志"));
   assert.equal(
@@ -236,8 +258,15 @@ try {
       .count(),
     0,
   );
+  assert.equal(
+    await page.getByRole("button", { name: "新建抓取", exact: true }).count(),
+    1,
+  );
+  assert.ok(await newCapture.isVisible());
   await notes.fill("历史补充备注");
-  await capture.getByRole("button", { name: "新建抓取", exact: true }).click();
+  await page.getByRole("button", { name: "收起操作栏", exact: true }).click();
+  await returnToLive.click();
+  await title.waitFor();
   assert.equal(await title.inputValue(), "未开始草稿");
   assert.equal(await notes.inputValue(), "草稿备注");
   assert.deepEqual(await page.evaluate(() => window.calls.saves), [
@@ -248,13 +277,16 @@ try {
   await page.getByText("Error: 模拟开始失败", { exact: true }).waitFor();
   assert.equal(await title.inputValue(), "未开始草稿");
   await page.locator(".history-row button").first().click();
-  await newCapture().click();
+  await newCapture.click();
+  await page.waitForFunction(
+    () => document.activeElement?.getAttribute("aria-label") === "抓取标题",
+  );
   assert.equal(await notes.inputValue(), "草稿备注");
   await page.evaluate(() => (window.calls.failStart = false));
   await capture.getByRole("button", { name: "开始抓取", exact: true }).click();
   await capture.getByText("抓取中", { exact: true }).waitFor();
   assert.ok(await title.isDisabled());
-  assert.ok(await newCapture().isDisabled());
+  assert.equal(await newCapture.count(), 0);
   assert.ok(await page.getByRole("checkbox", { name: "选择 未开始草稿", exact: true }).isDisabled());
   await page.getByRole("checkbox", { name: "全选记录", exact: true }).check();
   assert.equal(await page.locator('.history-row input:checked').count(), 1);
@@ -264,16 +296,19 @@ try {
     "未开始草稿",
   );
   await notes.fill("抓取中补充");
+  const stop = page.locator(".workspace-toolbar").getByRole("button", { name: "停止并保存", exact: true });
+  assert.ok(await stop.isVisible());
+  await page.getByRole("tab", { name: "设备连接", exact: true }).click();
+  assert.ok(await stop.isEnabled());
+  assert.ok(await stop.evaluate((el) => el.getBoundingClientRect().right <= el.parentElement.getBoundingClientRect().right));
+  await page.getByRole("tab", { name: "抓取", exact: true }).click();
   await page.getByRole("button", { name: "收起操作栏", exact: true }).click();
-  await page
-    .locator(".workspace-toolbar")
-    .getByRole("button", { name: "停止并保存", exact: true })
-    .click();
+  await stop.click();
   await page.getByRole("button", { name: "展开操作栏", exact: true }).click();
   await capture.getByText("已保存", { exact: true }).first().waitFor();
   assert.equal(await notes.inputValue(), "抓取中补充");
   await notes.fill("停止后补充");
-  await capture.getByRole("button", { name: "新建抓取", exact: true }).click();
+  await newCapture.click();
   assert.equal(await title.inputValue(), "");
   assert.equal(await notes.inputValue(), "");
   assert.ok(
@@ -295,12 +330,12 @@ try {
   await page.locator(".history-row button").first().click();
   await page.evaluate(() => (window.calls.failSave = true));
   await notes.fill("失败后重试备注");
-  await newCapture().click();
+  await newCapture.click();
   await page.getByText("Error: 模拟备注失败", { exact: true }).waitFor();
   assert.equal(await title.inputValue(), "未开始草稿");
   assert.equal(await notes.inputValue(), "失败后重试备注");
   await page.evaluate(() => (window.calls.failSave = false));
-  await newCapture().click();
+  await newCapture.click();
   await title.waitFor({ state: "visible" });
   assert.equal(await title.inputValue(), "");
   assert.equal(await page.evaluate(() => window.calls.stop), 1);
@@ -317,7 +352,8 @@ try {
   await page.evaluate(() => (window.calls.failRead = false));
   await page.locator(".history-row button").first().click();
   await page.getByText("test/new MCU 历史内容", { exact: false }).waitFor();
-  await page.getByRole("button", { name: "返回实时", exact: true }).click();
+  assert.equal(await historyBanner.locator("small").count(), 0);
+  await returnToLive.click();
   await page.getByText("MCU 保留日志", { exact: false }).first().waitFor();
   await page.locator(".history-row button").first().click();
   const selectAll = page.getByRole("checkbox", { name: "全选记录", exact: true });
@@ -348,8 +384,68 @@ try {
   await page.getByText("还没有抓取记录", { exact: true }).waitFor();
   assert.ok(await selectAll.isDisabled());
   assert.equal(await selectAll.isChecked(), false);
+
+  const connectionTab = page.getByRole("tab", { name: "设备连接", exact: true });
+  const connectButton = connection.getByRole("button", { name: "连接设备", exact: true });
+  const disconnectButton = connection.getByRole("button", { name: "断开连接", exact: true });
+  const mcuSelect = connection.getByRole("combobox", { name: "串口", exact: true });
+  const androidSelect = connection.getByRole("combobox", { name: "Android 设备", exact: true });
+  const layouts = page.getByRole("group", { name: "日志布局" });
+  const pane = page.locator(".log-pane");
+  const assertSinglePane = async (name) => {
+    await pane.getByText(name, { exact: true }).waitFor();
+    assert.equal(await pane.count(), 1);
+    assert.equal(await layouts.count(), 0);
+    assert.ok(await pane.evaluate((el) => el.getBoundingClientRect().width === el.parentElement.getBoundingClientRect().width));
+  };
+  await layouts.getByRole("button", { name: "上下", exact: true }).click();
+  await connectionTab.click();
+  await disconnectButton.click();
+  await page.evaluate(() => (window.calls.androidUnavailable = true));
+  await connectButton.click();
+  await page.getByText(/Android 连接失败：设备离线/).waitFor();
+  assert.equal(await disconnectButton.count(), 0, "do not silently connect only one source");
+  await page.getByRole("button", { name: "仅连接串口", exact: true }).click();
+  await title.waitFor();
+  await assertSinglePane("MCU 串口");
+  assert.equal(await capture.getByText("Android 应用").count(), 0);
+  assert.equal(await page.evaluate(() => window.calls.connectConfigs.at(-1).androidSerial), "");
+  await title.fill("仅串口记录");
+  await capture.getByRole("button", { name: "开始抓取", exact: true }).click();
+  await page.evaluate(() => (window.calls.failRead = true));
+  await stop.click();
+  await page.getByText("Error: 模拟日志读取失败", { exact: true }).waitFor();
+  assert.equal(await historyBanner.locator("small").textContent(), "日志未加载，可重新点击记录重试");
+  await page.evaluate(() => (window.calls.failRead = false));
+  await page.getByRole("button", { name: /仅串口记录/ }).click();
+  await page.getByText("test/new MCU 历史内容", { exact: false }).waitFor();
+  await assertSinglePane("MCU 串口");
+  await page.getByRole("button", { name: "返回实时", exact: true }).click();
+  await connectionTab.click();
+  await disconnectButton.click();
+  await mcuSelect.selectOption("");
+  assert.ok(await connectButton.isDisabled(), "no selected devices");
+  await androidSelect.selectOption("test");
+  await assertSinglePane("Android Logcat");
+  await page.evaluate(() => (window.calls.androidUnavailable = false));
+  await connectButton.click();
+  await title.waitFor();
+  await assertSinglePane("Android Logcat");
+  assert.ok(await capture.getByText("Android 应用").isVisible());
+  assert.equal(await page.evaluate(() => window.calls.connectConfigs.at(-1).serialPort), "");
+  await page.getByRole("button", { name: /仅串口记录/ }).click();
+  await assertSinglePane("MCU 串口");
+  await page.getByRole("button", { name: "返回实时", exact: true }).click();
+  await assertSinglePane("Android Logcat");
+  await connectionTab.click();
+  await disconnectButton.click();
+  await mcuSelect.selectOption("COM1");
+  await connectButton.click();
+  await title.waitFor();
+  assert.equal(await pane.count(), 2);
+  assert.equal(await layouts.getByRole("button", { name: "上下", exact: true }).getAttribute("aria-pressed"), "true");
   console.log(
-    "PASS: capture flow, drafts, notes retry, history log switching/read failure, live isolation, return to live, selection/indeterminate/select all, active capture protection, delete cancellation, save before delete, selected view cleanup and empty list",
+    "PASS: capture flow, notes, history, deletion, single-source layout and explicit connection fallback",
   );
 } finally {
   await browser?.close();

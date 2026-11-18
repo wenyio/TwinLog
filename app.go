@@ -29,16 +29,22 @@ type App struct {
 func NewApp() *App {
 	root, _ := os.UserConfigDir()
 	home, _ := os.UserHomeDir()
-	a := &App{settings: filepath.Join(root, "TwinLog", "settings.json"), config: capture.Config{ADBPath: "adb", OutputDir: filepath.Join(home, "Documents", "TwinLog"), BaudRate: 115200, DataBits: 8, StopBits: 1, Parity: "none"}}
-	if b, e := os.ReadFile(a.settings); e == nil {
-		_ = json.Unmarshal(b, &a.config)
-	}
+	settings := filepath.Join(root, "TwinLog", "settings.json")
+	a := &App{settings: settings, config: loadConfig(settings, filepath.Join(home, "Documents", "TwinLog"))}
 	a.manager = capture.NewManager(func(event string, p any) {
 		if a.ctx != nil {
 			wruntime.EventsEmit(a.ctx, event, p)
 		}
 	})
 	return a
+}
+
+func loadConfig(settings, outputDir string) capture.Config {
+	c := capture.Config{ADBPath: "adb", OutputDir: outputDir, BaudRate: 115200, DataBits: 8, StopBits: 1, Parity: "none", SaveFullLogs: true}
+	if b, e := os.ReadFile(settings); e == nil {
+		_ = json.Unmarshal(b, &c)
+	}
+	return c
 }
 func (a *App) startup(ctx context.Context) { a.ctx = ctx }
 func (a *App) beforeClose(ctx context.Context) bool {

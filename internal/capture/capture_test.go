@@ -3,6 +3,7 @@ package capture
 import (
 	"archive/zip"
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,14 +47,10 @@ func synthetic(t *testing.T) (*Manager, string) {
 	t.Helper()
 	root := t.TempDir()
 	session := filepath.Join(root, "session")
-	if e := os.MkdirAll(filepath.Join(session, "full"), 0755); e != nil {
+	if e := os.Mkdir(session, 0755); e != nil {
 		t.Fatal(e)
 	}
-	a, e := openLog(filepath.Join(session, "full", "mcu.log"))
-	if e != nil {
-		t.Fatal(e)
-	}
-	b, e := openLog(filepath.Join(session, "full", "android.log"))
+	a, b, e := openFullLogs(session, true, "")
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -62,7 +59,10 @@ func synthetic(t *testing.T) (*Manager, string) {
 	m.sessionDir = session
 	m.mcu = a
 	m.android = b
+	m.config.SerialPort = "COM1"
+	m.config.AndroidSerial = "test"
 	m.config.Package = "com.example.app"
+	m.config.SaveFullLogs = true
 	m.filter.SetUID("10123")
 	return m, root
 }
@@ -131,6 +131,86 @@ func TestFullCaptureNotesExport(t *testing.T) {
 		t.Fatal("export into source should fail")
 	}
 }
+func TestCaptureWithoutFullLogs(t *testing.T) {
+	m, root := synthetic(t)
+	t.Cleanup(func() { _ = errors.Join(m.mcu.close(), m.android.close()) })
+	legacy, err := m.StartCapture("with full logs", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = m.StopCapture(); err != nil {
+		t.Fatal(err)
+	}
+	legacySession := m.sessionDir
+	if err = errors.Join(m.mcu.close(), m.android.close()); err != nil {
+		t.Fatal(err)
+	}
+	m.sessionDir = filepath.Join(root, "capture-only")
+	if err = os.Mkdir(m.sessionDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	m.config.SaveFullLogs = false
+	m.mcu, m.android, err = openFullLogs(m.sessionDir, m.config.SaveFullLogs, "")
+	if err != nil || m.mcu != nil || m.android != nil {
+		t.Fatalf("unexpected full log writers: %v", err)
+	}
+	if err = writeJSON(filepath.Join(m.sessionDir, "session.json"), map[string]any{"config": m.config}); err != nil {
+		t.Fatal(err)
+	}
+	stamp := time.Date(2026, 11, 17, 1, 2, 3, 0, time.UTC)
+	app := "11-17 01:02:03.000 10123 100 101 D APP: wanted\n"
+	sys := "11-17 01:02:03.000 1000 200 201 I SYS: other\n"
+	ingest := func(source, text string) {
+		t.Helper()
+		if err := m.ingestLocked(source, []byte(text), stamp); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ingest("mcu", "before\npartial")
+	ingest("android", strings.Replace(app, "wanted", "before", 1))
+	r, err := m.StartCapture("capture only", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ingest("mcu", " tail\r\n")
+	ingest("android", app+sys)
+	if _, err = m.StopCapture(); err != nil {
+		t.Fatal(err)
+	}
+	ingest("mcu", "after\n")
+	ingest("android", strings.Replace(app, "wanted", "after", 1))
+	for name, want := range map[string]string{"mcu.log": "[2026-11-17 01:02:03.000]  tail\r\n", "android.log": app} {
+		got, err := os.ReadFile(filepath.Join(r.Path, name))
+		if err != nil || string(got) != want {
+			t.Fatalf("%s: got %q, %v; want %q", name, got, err, want)
+		}
+	}
+	if !strings.Contains(string(m.previewMCU), "after") || !strings.Contains(string(m.previewAndroid), "after") || bytes.Contains(m.previewAndroid, []byte(sys)) {
+		t.Fatal("preview did not continue with the active filter")
+	}
+	if _, err = os.Stat(filepath.Join(m.sessionDir, "full")); !os.IsNotExist(err) {
+		t.Fatalf("full directory must not exist, got %v", err)
+	}
+	m.connected = false
+	dest := filepath.Join(root, "mixed.zip")
+	if err = m.Export([]string{legacy.Path, r.Path}, dest, true); err != nil {
+		t.Fatal(err)
+	}
+	z, err := zip.OpenReader(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer z.Close()
+	entries := map[string]bool{}
+	for _, f := range z.File {
+		entries[f.Name] = true
+	}
+	if !entries[filepath.Base(legacySession)+"/full/android.log"] ||
+		!entries[filepath.Base(m.sessionDir)+"/"+filepath.Base(r.Path)+"/android.log"] || len(entries) != 11 {
+		t.Fatalf("unexpected mixed export: %v", entries)
+	}
+}
+
 func TestUTF8PreviewBoundary(t *testing.T) {
 	raw := []byte("a中文")
 	for i := 1; i < len(raw); i++ {

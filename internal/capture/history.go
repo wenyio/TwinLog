@@ -66,18 +66,24 @@ func readLogPreview(path string) (LogPreview, error) {
 }
 
 func (m *Manager) ReadRecordLogs(path string) (RecordLogs, error) {
-	if _, err := loadRecord(path); err != nil {
+	r, err := loadRecord(path)
+	if err != nil {
 		return RecordLogs{}, err
 	}
-	a, err := readLogPreview(filepath.Join(path, "mcu.log"))
-	if err != nil {
-		return RecordLogs{}, fmt.Errorf("读取 MCU 日志: %w", err)
+	var logs RecordLogs
+	if r.Source != "android" {
+		logs.MCU, err = readLogPreview(filepath.Join(path, "mcu.log"))
+		if err != nil {
+			return RecordLogs{}, fmt.Errorf("读取 MCU 日志: %w", err)
+		}
 	}
-	b, err := readLogPreview(filepath.Join(path, "android.log"))
-	if err != nil {
-		return RecordLogs{}, fmt.Errorf("读取 Android 日志: %w", err)
+	if r.Source != "mcu" {
+		logs.Android, err = readLogPreview(filepath.Join(path, "android.log"))
+		if err != nil {
+			return RecordLogs{}, fmt.Errorf("读取 Android 日志: %w", err)
+		}
 	}
-	return RecordLogs{MCU: a, Android: b}, nil
+	return logs, nil
 }
 
 // Records are moved, never erased. The full session logs remain in place.

@@ -29,6 +29,32 @@ func openLog(path string) (*logFile, error) {
 	}
 	return &logFile{f, bufio.NewWriterSize(f, 256*1024)}, nil
 }
+func openFullLogs(dir string, enabled bool, singleSource string) (*logFile, *logFile, error) {
+	if !enabled {
+		return nil, nil, nil
+	}
+	full := filepath.Join(dir, "full")
+	if err := os.Mkdir(full, 0755); err != nil {
+		return nil, nil, err
+	}
+	return openSourceLogs(full, singleSource)
+}
+func openSourceLogs(dir, singleSource string) (mcu, android *logFile, err error) {
+	if singleSource != "android" {
+		mcu, err = openLog(filepath.Join(dir, "mcu.log"))
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	if singleSource != "mcu" {
+		android, err = openLog(filepath.Join(dir, "android.log"))
+		if err != nil {
+			_ = mcu.close()
+			return nil, nil, err
+		}
+	}
+	return mcu, android, nil
+}
 func (l *logFile) write(p []byte) error {
 	if l == nil {
 		return nil
@@ -78,7 +104,7 @@ type Manager struct {
 func NewManager(emit func(string, any)) *Manager { return &Manager{emit: emit} }
 func (m *Manager) stateLocked() State {
 	s := State{Connected: m.connected, Capturing: m.record != nil, SessionDir: m.sessionDir, Config: m.config, Error: m.lastError, McuBytes: m.mcuBytes, AndroidBytes: m.androidBytes}
-	if m.connected && m.config.Package != "" {
+	if m.connected && m.config.AndroidSerial != "" && m.config.Package != "" {
 		if m.filter.pidOnly {
 			if len(m.filter.pids) == 0 {
 				s.FilterStatus = "等待应用启动"
@@ -86,7 +112,7 @@ func (m *Manager) stateLocked() State {
 				s.FilterStatus = fmt.Sprintf("应用进程过滤 · %d 个进程", len(m.filter.pids))
 			}
 			if m.connected && m.trackerError != "" {
-				s.FilterStatus = "应用过滤暂不可用，正在重试；完整日志继续保存"
+				s.FilterStatus = "应用过滤暂不可用，正在重试"
 				s.FilterWarning = m.trackerError
 			}
 		} else {
@@ -121,29 +147,18 @@ func (m *Manager) fail(err error) {
 	}
 	go m.disconnect(true)
 }
-func (m *Manager) Connect(c Config) error {
-	m.op.Lock()
-	defer m.op.Unlock()
-	m.mu.Lock()
-	busy := m.connected
-	m.mu.Unlock()
-	if busy {
-		return fmt.Errorf("已经连接，请先断开")
-	}
-	if c.SerialPort == "" || c.AndroidSerial == "" || c.OutputDir == "" {
-		return fmt.Errorf("请选择串口、Android 设备和保存目录")
-	}
+func openSerial(c Config) (serial.Port, error) {
 	if c.BaudRate <= 0 {
-		return fmt.Errorf("波特率必须大于零")
+		return nil, fmt.Errorf("波特率必须大于零")
 	}
 	if c.DataBits == 0 {
 		c.DataBits = 8
 	}
 	if c.DataBits < 5 || c.DataBits > 8 {
-		return fmt.Errorf("数据位必须在 5 到 8 之间")
+		return nil, fmt.Errorf("数据位必须在 5 到 8 之间")
 	}
 	if c.StopBits != 1 && c.StopBits != 2 {
-		return fmt.Errorf("停止位仅支持 1 或 2")
+		return nil, fmt.Errorf("停止位仅支持 1 或 2")
 	}
 	parity := serial.NoParity
 	switch c.Parity {
@@ -153,12 +168,24 @@ func (m *Manager) Connect(c Config) error {
 	case "even":
 		parity = serial.EvenParity
 	default:
-		return fmt.Errorf("不支持的校验位")
+		return nil, fmt.Errorf("不支持的校验位")
 	}
-	identity, e := resolveIdentity(c.ADBPath, c.AndroidSerial, c.Package)
-	if e != nil {
-		return e
+	stops := serial.OneStopBit
+	if c.StopBits == 2 {
+		stops = serial.TwoStopBits
 	}
+	port, err := serial.Open(c.SerialPort, &serial.Mode{BaudRate: c.BaudRate, DataBits: c.DataBits, Parity: parity, StopBits: stops, InitialStatusBits: &serial.ModemOutputBits{DTR: c.DTR, RTS: c.RTS}})
+	if err != nil {
+		return nil, err
+	}
+	if err = port.SetReadTimeout(250 * time.Millisecond); err != nil {
+		_ = port.Close()
+		return nil, err
+	}
+	return port, nil
+}
+
+func checkAndroid(c Config) error {
 	status, e := adbOutput(c.ADBPath, "-s", c.AndroidSerial, "get-state")
 	if e != nil {
 		return e
@@ -173,85 +200,110 @@ func (m *Manager) Connect(c Config) error {
 	if !strings.Contains(help, "uid") {
 		return fmt.Errorf("设备 logcat 不支持 UID 格式，无法可靠过滤应用")
 	}
+	return nil
+}
+
+func (m *Manager) Connect(c Config) error { return m.connect(c, openSerial) }
+
+func (m *Manager) connect(c Config, openPort func(Config) (serial.Port, error)) error {
+	m.op.Lock()
+	defer m.op.Unlock()
+	m.mu.Lock()
+	busy := m.connected
+	m.mu.Unlock()
+	if busy {
+		return fmt.Errorf("已经连接，请先断开")
+	}
+	if c.SerialPort == "" && c.AndroidSerial == "" {
+		return fmt.Errorf("请至少选择一路日志设备")
+	}
+	if c.OutputDir == "" {
+		return fmt.Errorf("请选择保存目录")
+	}
+	var identity appIdentity
 	var pids map[string]bool
 	systemPID := ""
 	trackerWarning := ""
-	if identity.shared {
-		pids, systemPID, e = packageSnapshot(context.Background(), c.ADBPath, c.AndroidSerial, c.Package)
+	var e error
+	if c.AndroidSerial != "" {
+		if e = checkAndroid(c); e != nil {
+			return fmt.Errorf("Android 连接失败：%w", e)
+		}
+		identity, e = resolveIdentity(c.ADBPath, c.AndroidSerial, c.Package)
 		if e != nil {
-			trackerWarning = e.Error()
-			pids = map[string]bool{}
+			return fmt.Errorf("Android 连接失败：%w", e)
+		}
+		if identity.shared {
+			pids, systemPID, e = packageSnapshot(context.Background(), c.ADBPath, c.AndroidSerial, c.Package)
+			if e != nil {
+				trackerWarning = e.Error()
+				pids = map[string]bool{}
+			}
 		}
 	}
-	stops := serial.OneStopBit
-	if c.StopBits == 2 {
-		stops = serial.TwoStopBits
+	ctx, cancel := context.WithCancel(context.Background())
+	var port serial.Port
+	var cmd *exec.Cmd
+	var stdout, stderr io.ReadCloser
+	var mf, af *logFile
+	started := false
+	defer func() {
+		if started {
+			return
+		}
+		cancel()
+		if stdout != nil {
+			_ = stdout.Close()
+		}
+		if stderr != nil {
+			_ = stderr.Close()
+		}
+		if cmd != nil && cmd.Process != nil {
+			_ = cmd.Wait()
+		}
+		if port != nil {
+			_ = port.Close()
+		}
+		_ = errors.Join(mf.close(), af.close())
+	}()
+	if c.SerialPort != "" {
+		port, e = openPort(c)
+		if e != nil {
+			return fmt.Errorf("串口连接失败：%w", e)
+		}
 	}
-	port, e := serial.Open(c.SerialPort, &serial.Mode{BaudRate: c.BaudRate, DataBits: c.DataBits, Parity: parity, StopBits: stops, InitialStatusBits: &serial.ModemOutputBits{DTR: c.DTR, RTS: c.RTS}})
-	if e != nil {
-		return fmt.Errorf("打开串口失败：%w", e)
-	}
-	if e = port.SetReadTimeout(250 * time.Millisecond); e != nil {
-		port.Close()
-		return e
+	if c.AndroidSerial != "" {
+		cmd = command(ctx, c.ADBPath, "-s", c.AndroidSerial, "logcat", "-b", "all", "-v", "threadtime", "-v", "uid", "*:V")
+		cmd.WaitDelay = 2 * time.Second
+		if stdout, e = cmd.StdoutPipe(); e == nil {
+			stderr, e = cmd.StderrPipe()
+		}
+		if e == nil {
+			e = cmd.Start()
+		}
+		if e != nil {
+			return fmt.Errorf("Android 连接失败：%w", e)
+		}
 	}
 	if e = os.MkdirAll(c.OutputDir, 0755); e != nil {
-		port.Close()
 		return e
 	}
 	dir, e := uniqueDir(c.OutputDir, timeDir())
 	if e != nil {
-		port.Close()
 		return e
 	}
-	if e = os.Mkdir(filepath.Join(dir, "full"), 0755); e != nil {
-		port.Close()
-		return e
-	}
-	mf, e := openLog(filepath.Join(dir, "full", "mcu.log"))
+	mf, af, e = openFullLogs(dir, c.SaveFullLogs, c.singleSource())
 	if e != nil {
-		port.Close()
 		return e
 	}
-	af, e := openLog(filepath.Join(dir, "full", "android.log"))
-	if e != nil {
-		mf.close()
-		port.Close()
-		return e
+	meta := map[string]any{"config": c, "startedAt": nowISO(), "timezone": time.Now().Format("MST -07:00")}
+	if cmd != nil {
+		meta["androidCommand"] = cmd.Args
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cmd := command(ctx, c.ADBPath, "-s", c.AndroidSerial, "logcat", "-b", "all", "-v", "threadtime", "-v", "uid", "*:V")
-	cmd.WaitDelay = 2 * time.Second
-	stdout, e := cmd.StdoutPipe()
-	if e != nil {
-		cancel()
-		mf.close()
-		af.close()
-		port.Close()
-		return e
+	if port != nil {
+		meta["mcuTimestamp"] = "host receive time, line first byte"
 	}
-	stderr, e := cmd.StderrPipe()
-	if e != nil {
-		cancel()
-		mf.close()
-		af.close()
-		port.Close()
-		return e
-	}
-	if e = cmd.Start(); e != nil {
-		cancel()
-		mf.close()
-		af.close()
-		port.Close()
-		return e
-	}
-	meta := map[string]any{"config": c, "startedAt": nowISO(), "timezone": time.Now().Format("MST -07:00"), "androidCommand": cmd.Args, "mcuTimestamp": "host receive time, line first byte"}
 	if e = writeJSON(filepath.Join(dir, "session.json"), meta); e != nil {
-		cancel()
-		cmd.Wait()
-		mf.close()
-		af.close()
-		port.Close()
 		return e
 	}
 	m.mu.Lock()
@@ -280,36 +332,42 @@ func (m *Manager) Connect(c Config) error {
 		m.recordFilterEventLocked("unavailable", trackerWarning)
 	}
 	m.mu.Unlock()
-	m.wg.Add(5)
-	go func() { defer m.wg.Done(); m.trackProcesses(ctx) }()
-	go func() { defer m.wg.Done(); m.readStream(ctx, "mcu", port) }()
-	go func() {
-		defer m.wg.Done()
-		m.readStream(ctx, "android", stdout)
-		if ctx.Err() == nil {
-			m.fail(fmt.Errorf("Android 日志流已结束，请检查 USB 连接"))
-		}
-	}()
-	go func() {
-		defer m.wg.Done()
-		buf := make([]byte, 4096)
-		for {
-			n, err := stderr.Read(buf)
-			if n > 0 && ctx.Err() == nil {
-				m.mu.Lock()
-				m.lastError = "ADB: " + strings.TrimSpace(string(buf[:n]))
-				m.mu.Unlock()
-				m.notify()
-			}
-			if err != nil {
-				return
-			}
-		}
-	}()
+	if port != nil {
+		m.wg.Add(1)
+		go func() { defer m.wg.Done(); m.readStream(ctx, "mcu", port) }()
+	}
+	if cmd != nil {
+		m.wg.Add(3)
+		go func() { defer m.wg.Done(); m.trackProcesses(ctx) }()
+		go func() {
+			defer m.wg.Done()
+			m.readStream(ctx, "android", stdout)
+		}()
+		go func() { defer m.wg.Done(); m.readADBStatus(ctx, stderr) }()
+	}
+	m.wg.Add(1)
 	go func() { defer m.wg.Done(); m.pulse(ctx) }()
+	started = true
 	m.notify()
 	return nil
 }
+
+func (m *Manager) readADBStatus(ctx context.Context, stderr io.Reader) {
+	buf := make([]byte, 4096)
+	for {
+		n, err := stderr.Read(buf)
+		if n > 0 && ctx.Err() == nil {
+			m.mu.Lock()
+			m.lastError = "ADB: " + strings.TrimSpace(string(buf[:n]))
+			m.mu.Unlock()
+			m.notify()
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
 func (m *Manager) readStream(ctx context.Context, source string, r io.Reader) {
 	buf := make([]byte, 64*1024)
 	for {
@@ -336,6 +394,8 @@ func (m *Manager) readStream(ctx context.Context, source string, r io.Reader) {
 				m.fail(fmt.Errorf("%s 读取失败：%w", source, e))
 			} else if source == "mcu" {
 				m.fail(fmt.Errorf("串口连接已结束"))
+			} else {
+				m.fail(fmt.Errorf("Android 日志流已结束，请检查 USB 连接"))
 			}
 			return
 		}
@@ -449,10 +509,13 @@ func (m *Manager) disconnect(interrupted bool) error {
 	cmd := m.cmd
 	cancel()
 	m.mu.Unlock()
-	port.Close()
+	if port != nil {
+		_ = port.Close()
+	}
 	m.wg.Wait()
-	cmdErr := cmd.Wait()
-	_ = cmdErr
+	if cmd != nil {
+		_ = cmd.Wait()
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var e error
@@ -497,7 +560,7 @@ func (m *Manager) SetPackage(pkg string) error {
 	systemPID := ""
 	trackerWarning := ""
 	var e error
-	if connected {
+	if connected && c.AndroidSerial != "" {
 		identity, e = resolveIdentity(c.ADBPath, c.AndroidSerial, pkg)
 		if e != nil {
 			return e
@@ -546,17 +609,16 @@ func (m *Manager) StartCapture(title, notes string) (Record, error) {
 	if e != nil {
 		return Record{}, e
 	}
-	a, e := openLog(filepath.Join(dir, "mcu.log"))
+	source := m.config.singleSource()
+	a, b, e := openSourceLogs(dir, source)
 	if e != nil {
 		return Record{}, e
 	}
-	b, e := openLog(filepath.Join(dir, "android.log"))
-	if e != nil {
-		a.close()
-		return Record{}, e
+	r := Record{Path: dir, Title: title, Notes: notes, StartedAt: nowISO(), Source: source}
+	if source != "mcu" {
+		r.Package = m.config.Package
+		r.FilterGaps = m.trackerError != ""
 	}
-	r := Record{Path: dir, Title: title, Notes: notes, StartedAt: nowISO(), Package: m.config.Package}
-	r.FilterGaps = m.trackerError != ""
 	if e = AtomicWrite(filepath.Join(dir, "notes.txt"), []byte(notes)); e == nil {
 		e = writeJSON(filepath.Join(dir, "record.json"), r)
 	}

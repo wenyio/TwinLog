@@ -48,15 +48,20 @@ try {
         const el = document.querySelectorAll(".log-pane pre")[index];
         return el.scrollHeight > el.clientHeight && Math.abs(el.scrollHeight - el.clientHeight - el.scrollTop) < 2;
       }, index);
-      await pane.getByRole("button", { name: "暂停自动滚动", exact: true }).click();
       await pre.evaluate((el) => { el.scrollTop = 200; });
+      const latest = pane.getByRole("button", { name: "回到最新", exact: true });
+      await latest.waitFor();
       const frozen = await pre.textContent();
       const scrollTop = await pre.evaluate((el) => el.scrollTop);
       await page.evaluate((source) => window.testLogs(source, 2200, 2500), source);
       await page.waitForTimeout(100);
       assert.equal(await pre.textContent(), frozen, source + ": paused preview changed after buffer eviction");
       assert.equal(await pre.evaluate((el) => el.scrollTop), scrollTop, source + ": paused scroll moved");
-      await pane.getByRole("button", { name: "继续自动滚动", exact: true }).click();
+      if (source === "mcu") {
+        await latest.click();
+      } else {
+        await pre.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+      }
       await page.waitForFunction((index) => {
         const el = document.querySelectorAll(".log-pane pre")[index];
         return el.textContent.includes("line 4699") && Math.abs(el.scrollHeight - el.clientHeight - el.scrollTop) < 2;
@@ -68,8 +73,8 @@ try {
       await page.evaluate((source) => window.testLogs(source, 5000, 30), source);
       await page.waitForTimeout(100);
       assert.ok(!(await pre.textContent()).includes("line 5029"));
-      assert.equal(await pane.getByRole("button", { name: "继续自动滚动", exact: true }).getAttribute("aria-pressed"), "true");
-      await pane.getByRole("button", { name: "继续自动滚动", exact: true }).click();
+      assert.ok(await latest.isVisible());
+      await latest.click();
       await page.waitForFunction((index) => document.querySelectorAll(".log-pane pre")[index].textContent.includes("line 5029"), index);
     }
     // Each pane owns its pause state.
@@ -79,7 +84,7 @@ try {
     await page.waitForFunction(() => document.querySelectorAll(".log-pane pre")[1].textContent.includes("line 6009"));
     assert.equal(await panes.first().locator("pre").textContent(), mcuFrozen);
     await page.close();
-    console.log("PASS: both panes pause/resume, eviction, clear and independence at height " + height);
+    console.log("PASS: both panes scroll pause, return to latest/bottom, manual pause, eviction, clear and independence at height " + height);
   }
 } finally {
   await browser?.close();

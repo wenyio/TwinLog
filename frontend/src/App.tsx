@@ -7,6 +7,7 @@ import {
   FolderOpen,
   RefreshCw,
   Play,
+  ArrowDownToLine,
   Square,
   Download,
   Plus,
@@ -32,6 +33,7 @@ import {
   State,
   RecordItem,
   RecordLogs,
+  LogSource,
   Port,
   Device,
 } from "./bridge";
@@ -80,20 +82,15 @@ function LogPane({
   visible: boolean;
   historical?: boolean;
 }) {
-  const [paused, setPaused] = useState(false);
-  const [snapshot, setSnapshot] = useState("");
+  const [pause, setPause] = useState<{ reason: "manual" | "scroll"; text: string } | null>(null);
   const pre = useRef<HTMLPreElement>(null);
-  const displayedText = paused ? snapshot : text;
+  const displayedText = pause?.text ?? text;
   useLayoutEffect(() => {
-    if (visible && !paused && pre.current)
+    if (visible && !pause && pre.current)
       pre.current.scrollTop = pre.current.scrollHeight;
-  }, [text, paused, visible]);
-  const togglePaused = () => {
-    if (!paused) setSnapshot(text);
-    setPaused((value) => !value);
-  };
+  }, [displayedText, pause, visible]);
   const clearPreview = () => {
-    setSnapshot("");
+    setPause((value) => value && { ...value, text: "" });
     clear();
     if (pre.current) pre.current.scrollTop = 0;
   };
@@ -104,15 +101,12 @@ function LogPane({
         <strong>{source === "mcu" ? "MCU 串口" : "Android Logcat"}</strong>
         <div className="grow" />
         {!historical && <button
-          className={"icon " + (paused ? "toggled" : "")}
-          title={
-            paused ? "继续自动滚动，显示最新日志" : "暂停自动滚动，固定当前预览"
-          }
-          aria-label={paused ? "继续自动滚动" : "暂停自动滚动"}
-          aria-pressed={paused}
-          onClick={togglePaused}
+          className={"icon " + (pause ? "toggled" : "")}
+          title={pause ? "回到最新" : "暂停自动滚动，固定当前预览"}
+          aria-label={pause ? "回到最新" : "暂停自动滚动"}
+          onClick={() => setPause(pause ? null : { reason: "manual", text })}
         >
-          {paused ? <Play size={14} /> : <Pause size={14} />}
+          {pause ? <ArrowDownToLine size={15} /> : <Pause size={14} />}
         </button>}
         <button
           className="icon"
@@ -122,7 +116,14 @@ function LogPane({
           <Trash2 size={14} />
         </button>
       </header>
-      <pre ref={pre}>
+      <pre ref={pre} tabIndex={0} onScroll={(event) => {
+        if (historical || !visible || pause?.reason === "manual") return;
+        const { scrollHeight, scrollTop, clientHeight } = event.currentTarget;
+        if (scrollHeight <= clientHeight) return;
+        const atBottom = scrollHeight - clientHeight - scrollTop <= 2;
+        if (!pause && !atBottom) setPause({ reason: "scroll", text });
+        else if (pause && atBottom) setPause(null);
+      }}>
         {displayedText || (
           <span className="log-empty">
             {historical ? "该记录暂无日志内容" : source === "mcu" ? "等待串口数据…" : "等待 Android 日志…"}
@@ -158,6 +159,7 @@ export default function App() {
     [advanced, setAdvanced] = useState(false);
   const [busy, setBusy] = useState(""),
     [error, setError] = useState(""),
+    [fallbackSource, setFallbackSource] = useState<LogSource | null>(null),
     [notice, setNotice] = useState(""),
     [includeFull, setIncludeFull] = useState(false),
     [mcu, setMcu] = useState(""),
@@ -265,7 +267,7 @@ export default function App() {
       .GetConfig()
       .then(async (c) => {
         if (!alive) return;
-        setConfig(c);
+        setConfig({ ...defaults, ...c });
         // Publish each result as it arrives; a slow scan or ADB query must
         // not hold up the other startup tasks.
         await Promise.allSettled([
@@ -318,7 +320,10 @@ export default function App() {
     if (!state.connected && !state.capturing && desktop())
       refreshRecords().catch((e) => setError(String(e)));
   }, [state.connected, state.capturing]);
-  const patch = (v: Partial<Config>) => setConfig((c) => ({ ...c, ...v }));
+  const patch = (v: Partial<Config>) => {
+    setFallbackSource(null);
+    setConfig((c) => ({ ...c, ...v }));
+  };
   const changeView = async (r: RecordItem) => {
     await flush();
     const logs = await api.ReadRecordLogs(r.path);
@@ -357,20 +362,44 @@ export default function App() {
     });
   const refreshDevices = () =>
     run("刷新设备", async () => {
-      const [p, d] = await Promise.all([
-        api.ListPorts(),
-        api.ListDevices(config.adbPath),
+      const results = await Promise.allSettled([
+        api.ListPorts().then((p) => setPorts(p || [])),
+        api.ListDevices(config.adbPath).then((d) => setDevices(d || [])),
       ]);
-      setPorts(p || []);
-      setDevices(d || []);
+      const errors = results.flatMap((result, i) =>
+        result.status === "rejected" && (i === 0 || config.androidSerial)
+          ? [String(result.reason)] : [],
+      );
+      if (errors.length) setError(errors.join(" · "));
     });
-  const connect = () =>
+  const connect = (next = config) =>
     run("连接设备", async () => {
       await flush();
-      await api.Connect(config);
+      setFallbackSource(null);
+      setMcu("");
+      setAndroid("");
+      try {
+        await api.Connect(next);
+      } catch (e) {
+        if (next.serialPort && next.androidSerial) {
+          const message = String(e);
+          if (message.includes("Android 连接失败：")) setFallbackSource("mcu");
+          else if (message.includes("串口连接失败：")) setFallbackSource("android");
+        }
+        throw e;
+      }
+      setConfig(next);
       setState(await api.GetState());
+      if (viewRef.current) {
+        viewRef.current = null;
+        setView(null);
+        setRecordLogs(null);
+        setTitle(draft.current.title);
+        setNotes(draft.current.notes);
+        setSaved(true);
+      }
       setOperationsTab("capture");
-      focusTitle.current = !viewRef.current;
+      focusTitle.current = true;
       setIncludeFull(false);
     });
   const disconnect = () =>
@@ -384,7 +413,7 @@ export default function App() {
   const start = () =>
     run("开始抓取", async () => {
       await flush();
-      if (config.package !== state.config.package)
+      if (state.config.androidSerial && config.package !== state.config.package)
         await api.SetPackage(config.package);
       const r = await api.StartCapture(title, notes);
       draft.current = { title: "", notes: "" };
@@ -440,6 +469,21 @@ export default function App() {
   const locked = !!busy,
     live = state.capturing && view?.path === state.activeRecord?.path,
     history = !!view && !live;
+  const historyHint = !recordLogs
+    ? "日志未加载，可重新点击记录重试"
+    : recordLogs.mcu.truncated || recordLogs.android.truncated
+      ? "仅预览末尾最多 2000 行 / 256 KB，全文请打开记录目录"
+      : null;
+  const savingFullLogs = state.config.saveFullLogs !== false;
+  const currentDevices = state.connected ? state.config : config;
+  const singleSource = history ? view.source : currentDevices.serialPort
+    ? (currentDevices.androidSerial ? undefined : "mcu")
+    : (currentDevices.androidSerial ? "android" : undefined);
+  const logLayout = singleSource ?? layout.mode;
+  const connectionSummary = currentDevices.serialPort && currentDevices.androidSerial
+    ? `${currentDevices.serialPort} + ${currentDevices.androidSerial}`
+    : currentDevices.serialPort ? `仅串口 · ${currentDevices.serialPort}`
+    : currentDevices.androidSerial ? `仅 Android · ${currentDevices.androidSerial}` : "未选择设备";
   const selectable = records.filter((r) => r.path !== state.activeRecord?.path);
   const selectedCount = selectable.filter((r) => selected.has(r.path)).length;
   const allSelected = selectable.length > 0 && selectedCount === selectable.length;
@@ -473,15 +517,6 @@ export default function App() {
             <RefreshCw size={16} />
           </button>
         </div>
-        <button
-          className="new-record"
-          disabled={state.capturing || locked}
-          onClick={prepareCapture}
-          aria-current={!view ? "page" : undefined}
-        >
-          <Plus size={17} />
-          新建抓取
-        </button>
         <div className="selection-toolbar">
           <label>
             <input
@@ -596,7 +631,7 @@ export default function App() {
               <PanelLeftOpen size={18} />
             )}
           </button>
-          <div className="layout-switch" role="group" aria-label="日志布局">
+          {!singleSource && <div className="layout-switch" role="group" aria-label="日志布局">
             {(
               [
                 ["columns", "左右", Columns2],
@@ -615,7 +650,7 @@ export default function App() {
                 {label}
               </button>
             ))}
-          </div>
+          </div>}
           <div className="grow" />
           {state.capturing && (
             <>
@@ -626,16 +661,10 @@ export default function App() {
                 <i />
                 抓取中
               </span>
-              {!layout.right && (
-                <button
-                  className="stop compact"
-                  disabled={locked}
-                  onClick={stop}
-                >
-                  <Square size={13} />
-                  停止并保存
-                </button>
-              )}
+              <button className="stop compact" disabled={locked} onClick={stop}>
+                <Square size={13} />
+                停止并保存
+              </button>
             </>
           )}
           <button
@@ -667,6 +696,17 @@ export default function App() {
           <div className="error-banner">
             <AlertCircle size={16} />
             <span>{error || state.error}</span>
+            {error && fallbackSource && !state.connected && (
+              <button
+                className="secondary connection-fallback"
+                disabled={locked}
+                onClick={() => connect(fallbackSource === "mcu"
+                  ? { ...config, androidSerial: "" }
+                  : { ...config, serialPort: "" })}
+              >
+                {fallbackSource === "mcu" ? "仅连接串口" : "仅连接 Android"}
+              </button>
+            )}
             {error && (
               <button
                 className="icon"
@@ -682,43 +722,43 @@ export default function App() {
           <div className="preview-banner" title={state.filterWarning}>
             <AlertCircle size={16} />
             <span>
-              应用过滤暂不可用，正在重试；MCU 和完整 Android 日志继续保存。
+              应用过滤暂不可用，正在重试。{savingFullLogs && "完整 Android 日志继续保存。"}
             </span>
           </div>
         )}
         {history && (
           <div className="history-banner">
-            <span title={view.path}>
+            <span title={view.title}>
               历史日志 · <strong>{view.title}</strong>
-              <small>{recordLogs ? (recordLogs.mcu.truncated || recordLogs.android.truncated
-                ? "仅预览末尾最多 2000 行 / 256 KB，全文请打开记录目录"
-                : "显示该条抓取已保存的日志") : "日志未加载，可重新点击记录重试"}</small>
             </span>
             <button disabled={locked} onClick={prepareCapture}>返回实时</button>
+            {historyHint && <small>{historyHint}</small>}
           </div>
         )}
-        <LogSplit mode={layout.mode}>
-          <LogPane
-            key={history ? view.path + "mcu" : "live-mcu"}
+        <LogSplit mode={logLayout}>
+          {singleSource !== "android" && <LogPane
+            key={(history ? view.path : state.sessionDir) + "/mcu"}
             source="mcu"
             historical={history}
             text={history ? recordLogs?.mcu.text || "" : mcu}
             clear={() => history ? setRecordLogs((logs) => logs && ({ ...logs, mcu: { ...logs.mcu, text: "" } })) : setMcu("")}
-            visible={layout.mode !== "android"}
-          />
-          <LogPane
-            key={history ? view.path + "android" : "live-android"}
+            visible={logLayout !== "android"}
+          />}
+          {singleSource !== "mcu" && <LogPane
+            key={(history ? view.path : state.sessionDir) + "/android"}
             source="android"
             historical={history}
             text={history ? recordLogs?.android.text || "" : android}
             clear={() => history ? setRecordLogs((logs) => logs && ({ ...logs, android: { ...logs.android, text: "" } })) : setAndroid("")}
-            visible={layout.mode !== "mcu"}
-          />
+            visible={logLayout !== "mcu"}
+          />}
         </LogSplit>
         <footer className="statusbar">
           <span>
             <i className={state.connected ? "online-dot" : "offline-dot"} />
-            {busy || (state.connected ? "已连接 · 全量记录中" : "未连接")}
+            {busy || (state.connected
+              ? (savingFullLogs ? "已连接 · 全量记录中" : "已连接 · 未保存完整日志")
+              : "未连接")}
           </span>
           <span className="live-label">{history ? "历史日志" : "实时日志"}</span>
           <span className="status-notice" title={notice}>
@@ -726,8 +766,9 @@ export default function App() {
           </span>
           <div className="grow" />
           <span className="mono">
-            MCU {size(history ? recordLogs?.mcu.bytes || 0 : state.mcuBytes)}
-            <span className="divider">/</span>Android {size(history ? recordLogs?.android.bytes || 0 : state.androidBytes)}
+            {singleSource !== "android" && <>MCU {size(history ? recordLogs?.mcu.bytes || 0 : state.mcuBytes)}</>}
+            {!singleSource && <span className="divider">/</span>}
+            {singleSource !== "mcu" && <>Android {size(history ? recordLogs?.android.bytes || 0 : state.androidBytes)}</>}
           </span>
         </footer>
       </main>
@@ -817,26 +858,20 @@ export default function App() {
                   draft.current.title = e.target.value;
                 }}
               />
-              {state.capturing ? (
-                <button className="stop" disabled={locked} onClick={stop}>
-                  <Square size={15} fill="currentColor" />
-                  停止并保存
-                </button>
-              ) : history ? (
+              {!state.capturing && history && (
                 <button
-                  className="primary"
+                  className="secondary"
                   disabled={locked}
                   onClick={prepareCapture}
                 >
                   <Plus size={16} />
                   新建抓取
                 </button>
-              ) : (
+              )}
+              {!state.capturing && !history && (
                 <button
                   className="primary start"
-                  disabled={
-                    !state.connected || !title.trim() || history || locked
-                  }
+                  disabled={!state.connected || !title.trim() || locked}
                   onClick={start}
                 >
                   <Play size={16} fill="currentColor" />
@@ -844,7 +879,7 @@ export default function App() {
                 </button>
               )}
             </div>
-            <div className="app-select">
+            {(history ? view.source !== "mcu" : !!currentDevices.androidSerial) && <div className="app-select">
               <label htmlFor="package">Android 应用</label>
               <input
                 id="package"
@@ -897,7 +932,7 @@ export default function App() {
                   {state.filterStatus}
                 </span>
               )}
-            </div>
+            </div>}
           </section>
           <section className="notes-card">
             <header>
@@ -940,11 +975,7 @@ export default function App() {
                 <Usb size={17} />
               </div>
               <strong>设备连接</strong>
-              <span>
-                {state.connected
-                  ? config.serialPort + " + " + config.androidSerial
-                  : "未连接"}
-              </span>
+              <span title={connectionSummary}>{connectionSummary}</span>
               <div className="grow" />
             </div>
             <div className="connection-body">
@@ -956,7 +987,10 @@ export default function App() {
                     disabled={state.connected || locked}
                     onChange={(e) => patch({ serialPort: e.target.value })}
                   >
-                    <option value="">选择 COM 端口</option>
+                    <option value="">不连接串口</option>
+                    {config.serialPort && !ports.some((p) => p.name === config.serialPort) && (
+                      <option value={config.serialPort}>{config.serialPort} · 未发现</option>
+                    )}
                     {ports.map((p) => (
                       <option key={p.name} value={p.name}>
                         {p.name}
@@ -971,7 +1005,7 @@ export default function App() {
                     type="number"
                     min="1"
                     value={config.baudRate}
-                    disabled={state.connected || locked}
+                    disabled={!config.serialPort || state.connected || locked}
                     onChange={(e) =>
                       patch({ baudRate: Number(e.target.value) })
                     }
@@ -987,7 +1021,10 @@ export default function App() {
                       setPackages([]);
                     }}
                   >
-                    <option value="">选择设备</option>
+                    <option value="">不连接 Android</option>
+                    {config.androidSerial && !devices.some((d) => d.serial === config.androidSerial) && (
+                      <option value={config.androidSerial}>{config.androidSerial} · 未发现</option>
+                    )}
                     {devices.map((d) => (
                       <option
                         key={d.serial}
@@ -1039,10 +1076,9 @@ export default function App() {
                     locked ||
                     (!state.connected &&
                       (!config.outputDir ||
-                        !config.serialPort ||
-                        !config.androidSerial))
+                        (!config.serialPort && !config.androidSerial)))
                   }
-                  onClick={state.connected ? disconnect : connect}
+                  onClick={state.connected ? disconnect : () => connect()}
                 >
                   <Radio size={16} />
                   {busy === "连接设备"
@@ -1131,6 +1167,21 @@ export default function App() {
                       onChange={(e) => patch({ rts: e.target.checked })}
                     />
                     RTS
+                  </label>
+                  <label className="check-label full-logs-setting" title="关闭后，只有手动抓取的日志会保存">
+                    <input
+                      type="checkbox"
+                      checked={config.saveFullLogs}
+                      disabled={state.connected || locked}
+                      onChange={(e) => {
+                        const next = { ...config, saveFullLogs: e.target.checked };
+                        run("保存设置", async () => {
+                          await api.SaveConfig(next);
+                          setConfig(next);
+                        });
+                      }}
+                    />
+                    保存完整日志
                   </label>
                 </div>
               )}

@@ -10,7 +10,10 @@ export interface Config {
   parity: string;
   dtr: boolean;
   rts: boolean;
+  saveFullLogs: boolean;
 }
+export type LogSource = "mcu" | "android";
+
 export interface RecordItem {
   path: string;
   title: string;
@@ -18,6 +21,7 @@ export interface RecordItem {
   startedAt: string;
   endedAt: string;
   package: string;
+  source?: LogSource;
   interrupted: boolean;
   filterGaps?: boolean;
 }
@@ -63,6 +67,7 @@ export const defaults: Config = {
   parity: "none",
   dtr: false,
   rts: false,
+  saveFullLogs: true,
 };
 type Backend = {
   ConfirmClose(ok: boolean): Promise<void>;

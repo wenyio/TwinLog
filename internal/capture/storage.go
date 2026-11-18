@@ -146,6 +146,18 @@ func (m *Manager) SaveNotes(path, notes string) error {
 	}
 	return nil
 }
+
+func fullLogsDisabled(session string) bool {
+	var meta struct {
+		Config struct {
+			SaveFullLogs *bool `json:"saveFullLogs"`
+		} `json:"config"`
+	}
+	b, err := os.ReadFile(filepath.Join(session, "session.json"))
+	return err == nil && json.Unmarshal(b, &meta) == nil &&
+		meta.Config.SaveFullLogs != nil && !*meta.Config.SaveFullLogs
+}
+
 func (m *Manager) Export(paths []string, destination string, includeFull bool) error {
 	if len(paths) == 0 {
 		return fmt.Errorf("请选择需要导出的记录")
@@ -184,7 +196,11 @@ func (m *Manager) Export(paths []string, destination string, includeFull bool) e
 	}
 	if includeFull {
 		for s := range sessions {
-			dirs[filepath.Join(s, "full")] = filepath.Join(filepath.Base(s), "full")
+			full := filepath.Join(s, "full")
+			if _, e := os.Lstat(full); os.IsNotExist(e) && fullLogsDisabled(s) {
+				continue
+			}
+			dirs[full] = filepath.Join(filepath.Base(s), "full")
 		}
 	}
 	for dir := range dirs {
