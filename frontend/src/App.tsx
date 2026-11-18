@@ -171,6 +171,7 @@ export default function App() {
     saving = useRef<Promise<void>>(Promise.resolve()),
     timer = useRef<ReturnType<typeof setTimeout> | null>(null),
     viewRef = useRef<RecordItem | null>(null),
+    recordsRequest = useRef(0),
     stateRef = useRef(state),
     flushRef = useRef<() => Promise<void>>(async () => {});
   stateRef.current = state;
@@ -186,9 +187,11 @@ export default function App() {
       focusTitle.current = false;
     }
   }, [busy, view, layout.right, operationsTab]);
-  const refreshRecords = async (root = config.outputDir) => {
+  const refreshRecords = async (root = config.outputDir, isCurrent = () => true) => {
+    const request = ++recordsRequest.current;
     if (desktop() && root) {
       const items = (await api.ListRecords(root)) || [];
+      if (!isCurrent() || request !== recordsRequest.current) return;
       setRecords(items);
       setSelected((s) => new Set([...s].filter((path) =>
         items.some((r) => r.path === path && r.path !== stateRef.current.activeRecord?.path),
@@ -254,24 +257,33 @@ export default function App() {
   useEffect(() => {
     if (!desktop()) return;
     let alive = true;
+    // Port enumeration does not depend on settings, history, or ADB.
+    api.ListPorts().then((p) => {
+      if (alive) setPorts(p || []);
+    }).catch(() => {});
     api
       .GetConfig()
       .then(async (c) => {
         if (!alive) return;
         setConfig(c);
-        await refreshRecords(c.outputDir);
-        const [p, d] = await Promise.allSettled([
-          api.ListPorts(),
-          api.ListDevices(c.adbPath),
+        // Publish each result as it arrives; a slow scan or ADB query must
+        // not hold up the other startup tasks.
+        await Promise.allSettled([
+          refreshRecords(c.outputDir, () => alive).catch((e) => {
+            if (alive) setError(String(e));
+          }),
+          api.ListDevices(c.adbPath).then((d) => {
+            if (alive) setDevices(d || []);
+          }),
         ]);
-        if (alive) {
-          if (p.status === "fulfilled") setPorts(p.value || []);
-          if (d.status === "fulfilled") setDevices(d.value || []);
-        }
       })
-      .catch((e) => setError(String(e)));
+      .catch((e) => {
+        if (alive) setError(String(e));
+      });
     api.GetState().then((s) => {
       if (alive) setState(s);
+    }).catch((e) => {
+      if (alive) setError(String(e));
     });
     const offClose = window.runtime?.EventsOn("before-close", () => {
       flushRef

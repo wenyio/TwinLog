@@ -8,6 +8,8 @@ Windows 桌面工具，同时保存 MCU 串口和 Android logcat。Go + Wails + 
 
 运行 build/bin/TwinLog.exe。选择串口、Android 设备和保存目录，点击“连接并持续采集”。如需只抓某个应用，选择设备后点击“加载应用”，输入/选择包名；留空表示全部应用。
 
+启动时串口枚举立即开始，读取配置后并行查询历史记录和 Android 设备，各项完成后分别显示；历史目录读取慢或 ADB 响应慢时，其他列表仍可正常加载。
+
 输入标题与备注，Start 开始，Stop 保存当前抓取。Stop 后完整日志继续记录；点击左侧“新建抓取”开始下一条。备注自动保存，停止后可在历史记录里补充。点击左侧记录，中间两窗显示该条抓取的 MCU / Android 历史日志，并显示记录标题；大日志仅预览末尾最多 2000 行 / 256 KB，点击“打开记录目录”用文本工具查看全文。“返回实时”恢复实时预览，后台完整日志持续保存。
 
 勾选记录导出 ZIP。附带完整日志前先断开连接；正常退出会保存备注并停止采集。使用前关闭其他工具对同一串口的连接。
@@ -70,12 +72,15 @@ go test ./...
 go vet ./...
 Push-Location frontend
 npm.cmd run build
+npm.cmd run test:startup
 npm.cmd run test:capture
 npm.cmd run test:scroll
 Pop-Location
 ```
 
 界面测试在 Windows 使用已安装的 Microsoft Edge 和模拟 Wails 桥接，不连接设备。Go 实机测试默认跳过；需要手动设置 `TWINLOG_TEST_SERIAL`、`TWINLOG_TEST_ADB`（adb 路径）和 `TWINLOG_TEST_PACKAGE`（设备上的共享 UID 应用包名）后才会运行。实机测试只读查询进程和 logcat，不打开串口、不清空日志或重启应用。
+
+`test:startup` 检查生产前端资源，运行前需先执行 `npm.cmd run build`；覆盖配置/历史/ADB 查询等待、查询失败隔离，以及启动扫描迟到时不能覆盖新目录的记录。
 
 ## 代码入口
 
