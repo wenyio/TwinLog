@@ -268,7 +268,14 @@ try {
   assert.ok(await page.getByText("test/old Android 历史内容", { exact: false }).isVisible());
   const historyBanner = page.locator(".history-banner");
   const returnToLive = historyBanner.getByRole("button", { name: "返回实时", exact: true });
+  const assertReturnCentered = async () => {
+    const banner = await historyBanner.boundingBox();
+    const button = await returnToLive.boundingBox();
+    assert.ok(banner && button);
+    assert.ok(Math.abs((button.y - banner.y) - (banner.height - button.height) / 2) <= 1);
+  };
   assert.equal(await historyBanner.locator("small").textContent(), "仅预览末尾最多 2000 行 / 256 KB，全文请打开记录目录");
+  await assertReturnCentered();
   await page.evaluate(() => window.sendLogs());
   assert.ok(!(await page.locator(".log-pane pre").first().textContent()).includes("MCU 保留日志"));
   assert.equal(
@@ -384,6 +391,7 @@ try {
   await page.locator(".history-row button").first().click();
   await page.getByText("test/new MCU 历史内容", { exact: false }).waitFor();
   assert.equal(await historyBanner.locator("small").count(), 0);
+  await assertReturnCentered();
   await returnToLive.click();
   await page.getByText("MCU 保留日志", { exact: false }).first().waitFor();
   await page.locator(".history-row button").first().click();
@@ -466,6 +474,7 @@ try {
   await stop.click();
   await page.getByText("Error: 模拟日志读取失败", { exact: true }).waitFor();
   assert.equal(await historyBanner.locator("small").textContent(), "日志未加载，可重新点击记录重试");
+  await assertReturnCentered();
   await page.evaluate(() => (window.calls.failRead = false));
   await page.getByRole("button", { name: /仅串口记录/ }).click();
   await page.getByText("test/new MCU 历史内容", { exact: false }).waitFor();

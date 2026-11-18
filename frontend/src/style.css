@@ -202,10 +202,9 @@ label {
   background: #fff1ef;
 }
 .history-banner {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
   align-items: center;
-  gap: 3px 12px;
+  gap: 12px;
   padding: 5px 10px;
   margin-bottom: 9px;
   border: 1px solid var(--border);
@@ -215,18 +214,25 @@ label {
   font-size: 12px;
   flex-shrink: 0;
 }
-.history-banner > span {
+.history-summary {
+  flex: 1;
+  min-width: 0;
+}
+.history-summary > span {
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.history-banner small {
-  grid-column: 1 / -1;
+.history-summary small {
+  display: block;
+  margin-top: 3px;
   font-size: 10px;
   overflow-wrap: anywhere;
   color: var(--text-secondary);
 }
 .history-banner button {
+  flex-shrink: 0;
   height: 26px;
   font-size: 11px;
   border-color: var(--border);

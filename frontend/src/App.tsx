@@ -732,11 +732,13 @@ export default function App() {
         )}
         {history && (
           <div className="history-banner">
-            <span title={view.title}>
-              历史日志 · <strong>{displayTitle(view.title)}</strong>
-            </span>
+            <div className="history-summary">
+              <span title={view.title}>
+                历史日志 · <strong>{displayTitle(view.title)}</strong>
+              </span>
+              {historyHint && <small>{historyHint}</small>}
+            </div>
             <button disabled={locked} onClick={prepareCapture}>返回实时</button>
-            {historyHint && <small>{historyHint}</small>}
           </div>
         )}
         <LogSplit mode={logLayout}>
