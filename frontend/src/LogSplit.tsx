@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 type Mode = "columns" | "rows" | "mcu" | "android";
 type Ratios = { columns: number; rows: number };
@@ -23,12 +23,10 @@ export default function LogSplit({ mode, children }: { mode: Mode; children: [Re
   const split = mode === "columns" || mode === "rows";
   const ratio = split ? ratios[mode] : 50;
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      try { localStorage.setItem("twinlog.split", JSON.stringify(ratios)); } catch { /* Optional preference. */ }
-    }, 150);
-    return () => clearTimeout(timer);
-  }, [ratios]);
+  useLayoutEffect(() => {
+    if (dragging) return;
+    try { localStorage.setItem("twinlog.split", JSON.stringify(ratios)); } catch { /* Optional preference. */ }
+  }, [dragging, ratios]);
   useEffect(() => {
     if (!dragging) return;
     const previousCursor = document.body.style.cursor;

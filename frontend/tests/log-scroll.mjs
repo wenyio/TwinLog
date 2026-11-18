@@ -162,6 +162,26 @@ try {
       await page.keyboard.press("Control+f");
       await panes.first().getByRole("textbox", { name: "搜索当前预览" }).waitFor();
       await page.keyboard.press("Escape");
+
+      // Save on release, then reload without waiting for a persistence timer.
+      await layout.getByRole("button", { name: "上下", exact: true }).click();
+      const rowDivider = page.getByRole("separator", { name: "调整 MCU 与 Android 日志高度" });
+      const { x, y, width, height } = await rowDivider.boundingBox();
+      await page.mouse.move(x + width / 2, y + height / 2);
+      await page.mouse.down();
+      await page.mouse.move(x + width / 2, y + height / 2 - 65);
+      const rowRatio = Number(await rowDivider.getAttribute("aria-valuenow"));
+      assert.ok(rowRatio < 50);
+      await page.mouse.up();
+      const saved = await page.evaluate(() => JSON.parse(localStorage.getItem("twinlog.split")));
+      assert.equal(Math.round(saved.rows), rowRatio);
+      assert.equal(saved.columns, 80);
+      await page.reload();
+      await rowDivider.waitFor();
+      assert.equal(await rowDivider.getAttribute("aria-valuenow"), String(rowRatio));
+      await layout.getByRole("button", { name: "左右", exact: true }).click();
+      assert.equal(await page.getByRole("separator", { name: "调整 MCU 与 Android 日志宽度" }).getAttribute("aria-valuenow"), "80");
+      console.log("PASS: layout and independent split ratios survive immediate reload after drag");
     }
     await page.close();
     console.log("PASS: both panes scroll pause, return to latest/bottom, manual pause, eviction, clear and independence at height " + height);
