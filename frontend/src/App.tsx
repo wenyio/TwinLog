@@ -23,6 +23,7 @@ import {
   Columns2,
   Rows2,
   Radio,
+  X,
 } from "lucide-react";
 import {
   api,
@@ -106,6 +107,8 @@ export default function App() {
   const lastPane = useRef<LogSource>("mcu");
   const mcuFind = useRef<HTMLButtonElement>(null);
   const androidFind = useRef<HTMLButtonElement>(null);
+  const packageInput = useRef<HTMLInputElement>(null);
+  const focusPackage = useRef(false);
   const previewLines = useRef(config.previewLines);
   useEffect(() => {
     const lines = config.previewLines;
@@ -137,6 +140,12 @@ export default function App() {
       focusTitle.current = false;
     }
   }, [busy, view, layout.right, operationsTab]);
+  useEffect(() => {
+    if (!busy && focusPackage.current) {
+      focusPackage.current = false;
+      packageInput.current?.focus();
+    }
+  }, [busy]);
   const refreshRecords = async (root = config.outputDir, isCurrent = () => true) => {
     const request = ++recordsRequest.current;
     if (desktop() && root) {
@@ -149,6 +158,7 @@ export default function App() {
       setSelected((s) => new Set([...s].filter((path) =>
         items.some((r) => r.path === path && r.path !== stateRef.current.activeRecord?.path),
       )));
+      return items;
     }
   };
   const run = async (label: string, fn: () => Promise<void>) => {
@@ -392,23 +402,22 @@ export default function App() {
     run("删除记录", async () => {
       await flush();
       const paths = [...selected];
-      let trash = "";
       try {
-        trash = await api.DeleteRecords(paths);
+        await api.DeleteRecords(paths);
       } finally {
-        // Refresh even after a partially failed filesystem operation.
-        await refreshRecords();
+        // The shell can cancel or delete only part of the selection.
+        const items = await refreshRecords();
+        const current = viewRef.current;
+        if (items && current && paths.includes(current.path) && !items.some((r) => r.path === current.path)) {
+          viewRef.current = null;
+          setView(null);
+          setRecordLogs(null);
+          setTitle(draft.current.title);
+          setNotes(draft.current.notes);
+        }
+        const removed = items ? paths.filter((path) => !items.some((r) => r.path === path)).length : 0;
+        if (removed) setNotice(`已删除 ${removed} 条记录`);
       }
-      if (!trash) return;
-      if (viewRef.current && selected.has(viewRef.current.path)) {
-        viewRef.current = null;
-        setView(null);
-        setRecordLogs(null);
-        setTitle(draft.current.title);
-        setNotes(draft.current.notes);
-      }
-      setSelected(new Set());
-      setNotice("已将 " + paths.length + " 条记录移入回收目录：" + trash);
     });
   const exportRecords = () =>
     run("正在导出", async () => {
@@ -419,6 +428,16 @@ export default function App() {
   const locked = !!busy,
     live = state.capturing && view?.path === state.activeRecord?.path,
     history = !!view && !live;
+  const packageLocked = state.capturing || history || locked;
+  const applyPackage = (pkg: string) => {
+    if (!packageLocked && state.connected && pkg !== state.config.package) {
+      return run("切换应用", async () => {
+        await api.SetPackage(pkg);
+        setAndroid(emptyPreview);
+        setAndroidPreviewKey((key) => key + 1);
+      });
+    }
+  };
   const activeTitle = displayTitle(live ? view?.title : state.activeRecord?.title);
   const historyHint = !recordLogs
     ? "日志未加载，可重新点击记录重试"
@@ -435,8 +454,8 @@ export default function App() {
   const mcuKey = `${previewKey}/mcu`;
   const androidKey = `${previewKey}/android/${history ? 0 : androidPreviewKey}`;
   useEffect(() => {
-    setSearchPane(null);
-  }, [mcuKey, androidKey, logLayout]);
+    setSearchPane((pane) => pane === mcuKey || pane === androidKey ? pane : null);
+  }, [mcuKey, androidKey]);
   useEffect(() => {
     const find = (event: KeyboardEvent) => {
       if (!event.ctrlKey || event.altKey || event.metaKey || event.shiftKey || event.key.toLowerCase() !== "f") return;
@@ -479,7 +498,7 @@ export default function App() {
             className="icon"
             title="刷新记录"
             disabled={locked}
-            onClick={() => run("刷新记录", async () => refreshRecords())}
+            onClick={() => run("刷新记录", async () => { await refreshRecords(); })}
           >
             <RefreshCw size={16} />
           </button>
@@ -856,27 +875,37 @@ export default function App() {
             </div>
             {(history ? view.source !== "mcu" : !!currentDevices.androidSerial) && <div className="app-select">
               <label htmlFor="package">Android 应用</label>
-              <input
-                id="package"
-                list="packages"
-                placeholder="全部应用 / 包名"
-                value={history ? view.package : config.package}
-                disabled={state.capturing || history || locked}
-                onChange={(e) => patch({ package: e.target.value })}
-                onBlur={() => {
-                  if (
-                    state.connected &&
-                    !state.capturing &&
-                    !history &&
-                    config.package !== state.config.package
-                  )
-                    run("切换应用", async () => {
-                      await api.SetPackage(config.package);
-                      setAndroid(emptyPreview);
-                      setAndroidPreviewKey((key) => key + 1);
-                    });
+              <div
+                className="package-field"
+                onBlur={(e) => {
+                  if (!e.currentTarget.contains(e.relatedTarget)) applyPackage(config.package);
                 }}
-              />
+              >
+                <input
+                  ref={packageInput}
+                  id="package"
+                  list="packages"
+                  placeholder="全部应用 / 包名"
+                  value={history ? view.package : config.package}
+                  disabled={packageLocked}
+                  onChange={(e) => patch({ package: e.target.value })}
+                />
+                {!packageLocked && config.package && (
+                  <button
+                    type="button"
+                    className="icon package-clear"
+                    title="清空 Android 应用"
+                    aria-label="清空 Android 应用"
+                    onClick={() => {
+                      patch({ package: "" });
+                      if (applyPackage("")) focusPackage.current = true;
+                      else packageInput.current?.focus();
+                    }}
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
               <datalist id="packages">
                 {packages.map((p) => (
                   <option key={p} value={p} />
@@ -886,9 +915,7 @@ export default function App() {
                 className="text-button"
                 title="加载应用"
                 aria-label="加载应用"
-                disabled={
-                  !config.androidSerial || state.capturing || history || locked
-                }
+                disabled={!config.androidSerial || packageLocked}
                 onClick={() =>
                   run("加载应用", async () => {
                     setPackages(

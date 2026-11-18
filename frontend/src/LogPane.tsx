@@ -44,6 +44,7 @@ export default function LogPane({
   const [index, setIndex] = useState(0);
   const pre = useRef<HTMLPreElement>(null);
   const input = useRef<HTMLInputElement>(null);
+  const searchBar = useRef<HTMLDivElement>(null);
   const displayed = pause?.preview ?? preview;
   const { text, truncated } = displayed;
   const shownLines = useMemo(() => truncated && text ? lineCount(text) : 0, [text, truncated]);
@@ -71,17 +72,39 @@ export default function LogPane({
   useLayoutEffect(() => {
     const el = pre.current;
     const node = el?.firstChild;
-    if (!el || node?.nodeType !== Node.TEXT_NODE || offset === undefined) return;
+    const bar = searchBar.current;
+    if (!el || !bar || node?.nodeType !== Node.TEXT_NODE || offset === undefined) return;
     const range = new Range();
     range.setStart(node, offset);
     range.setEnd(node, offset + query.length);
     CSS.highlights?.set("log-match", new Highlight(range));
-    const hit = range.getBoundingClientRect();
-    const viewport = el.getBoundingClientRect();
-    el.scrollTop += hit.top - viewport.top - (el.clientHeight - hit.height) / 2;
-    if (hit.left < viewport.left || hit.right > viewport.left + el.clientWidth)
-      el.scrollLeft += hit.left - viewport.left - 12;
-    return () => { CSS.highlights?.delete("log-match"); };
+    const reveal = () => {
+      const hit = range.getBoundingClientRect();
+      const viewport = el.getBoundingClientRect();
+      el.scrollTop += hit.top - viewport.top - (el.clientHeight - hit.height) / 2;
+      if (hit.left < viewport.left || hit.right > viewport.left + el.clientWidth)
+        el.scrollLeft += hit.left - viewport.left - 12;
+
+      bar.removeAttribute("data-bottom");
+      const match = range.getBoundingClientRect();
+      const floating = bar.getBoundingClientRect();
+      if (match.right <= floating.left || match.left >= floating.right ||
+        match.bottom <= floating.top || match.top >= floating.bottom) return;
+      const delta = floating.bottom + 4 - match.top;
+      if (el.scrollTop >= delta && floating.bottom + 4 + match.height <= viewport.top + el.clientHeight)
+        el.scrollTop -= delta;
+      else
+        bar.setAttribute("data-bottom", "");
+    };
+    reveal();
+    const resize = new ResizeObserver(reveal);
+    resize.observe(el);
+    resize.observe(bar);
+    return () => {
+      resize.disconnect();
+      bar.removeAttribute("data-bottom");
+      CSS.highlights?.delete("log-match");
+    };
   }, [text, offset, query]);
 
   const openSearch = () => {
@@ -140,7 +163,8 @@ export default function LogPane({
           </button>
         </>}
       </header>
-      {searchOpen && <div className="log-search" role="search" aria-label="查找当前预览">
+      <div className="log-body">
+      {searchOpen && <div ref={searchBar} className="log-search" role="search" aria-label="查找当前预览">
         <input ref={input} aria-label="搜索当前预览" placeholder="搜索当前预览" value={query}
           onChange={(event) => { setQuery(event.target.value); setIndex(0); }}
           onKeyDown={(event) => {
@@ -150,9 +174,11 @@ export default function LogPane({
             }
           }} />
         <output aria-live="polite">{query ? (matches.length ? `${current + 1} / ${matches.length}` : "无匹配") : ""}</output>
-        <button className="icon" title="上一个 (Shift+Enter)" aria-label="上一个" disabled={!matches.length} onClick={() => step(-1)}><ChevronUp size={15} /></button>
-        <button className="icon" title="下一个 (Enter)" aria-label="下一个" disabled={!matches.length} onClick={() => step(1)}><ChevronDown size={15} /></button>
-        <button className="icon" title="关闭查找 (Esc)" aria-label="关闭查找" onClick={closeSearch}><X size={15} /></button>
+        <div className="log-search-actions">
+          <button className="icon" title="上一个 (Shift+Enter)" aria-label="上一个" disabled={!matches.length} onClick={() => step(-1)}><ChevronUp size={15} /></button>
+          <button className="icon" title="下一个 (Enter)" aria-label="下一个" disabled={!matches.length} onClick={() => step(1)}><ChevronDown size={15} /></button>
+          <button className="icon" title="关闭查找 (Esc)" aria-label="关闭查找" onClick={closeSearch}><X size={15} /></button>
+        </div>
       </div>}
       <pre ref={pre} tabIndex={0} onScroll={(event) => {
         if (historical || !visible || pause?.reason === "manual") return;
@@ -166,6 +192,7 @@ export default function LogPane({
           {historical ? "该记录暂无日志内容" : source === "mcu" ? "等待串口数据…" : "等待 Android 日志…"}
         </span>}
       </pre>
+      </div>
       {shownLines > 0 && <footer>仅显示末尾 {shownLines} 行</footer>}
     </section>
   );

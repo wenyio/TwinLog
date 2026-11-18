@@ -93,46 +93,54 @@ func (m *Manager) ReadRecordLogs(path string, lines int) (RecordLogs, error) {
 	return logs, nil
 }
 
-// Records are moved, never erased. The full session logs remain in place.
-func (m *Manager) TrashRecords(root string, paths []string) (string, error) {
+func (m *Manager) DeleteRecords(root string, paths []string) error {
+	return m.deleteRecords(root, paths, deleteWithShell)
+}
+
+func (m *Manager) deleteRecords(root string, paths []string, remove func([]string) error) error {
 	if len(paths) == 0 {
-		return "", fmt.Errorf("请选择需要删除的记录")
+		return fmt.Errorf("请选择需要删除的记录")
 	}
 	root, err := filepath.Abs(root)
 	if err != nil {
-		return "", err
+		return err
 	}
 	root, err = filepath.EvalSymlinks(root)
 	if err != nil {
-		return "", err
+		return err
 	}
+	// Block a new capture while the shell may be waiting for confirmation,
+	// without holding the lock used by the continuous log writers.
+	m.op.Lock()
+	defer m.op.Unlock()
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.record != nil {
-		return "", fmt.Errorf("请先停止当前抓取")
+	capturing := m.record != nil
+	m.mu.Unlock()
+	if capturing {
+		return fmt.Errorf("请先停止当前抓取")
 	}
 	validated := []string{}
 	seen := map[string]bool{}
 	for _, path := range paths {
 		p, e := filepath.Abs(path)
 		if e != nil {
-			return "", e
+			return e
 		}
 		p, e = filepath.EvalSymlinks(p)
 		if e != nil {
-			return "", e
+			return e
 		}
 		rel, e := filepath.Rel(root, p)
 		parts := strings.Split(rel, string(os.PathSeparator))
 		// A capture is a direct child of a session under the configured root.
-		if e != nil || len(parts) != 2 || parts[0] == ".." || strings.EqualFold(parts[0], ".twinlog-trash") || strings.EqualFold(parts[1], "full") {
-			return "", fmt.Errorf("记录不在当前保存目录内: %s", path)
+		if e != nil || len(parts) != 2 || parts[0] == ".." || strings.EqualFold(parts[0], ".twinlog-trash") || strings.EqualFold(parts[0], "full") || strings.EqualFold(parts[1], "full") {
+			return fmt.Errorf("记录不在当前保存目录内: %s", path)
 		}
 		if _, e = loadRecord(p); e != nil {
-			return "", e
+			return e
 		}
 		if _, e = os.Stat(filepath.Join(p, "session.json")); !os.IsNotExist(e) {
-			return "", fmt.Errorf("不能删除会话目录: %s", path)
+			return fmt.Errorf("不能删除会话目录: %s", path)
 		}
 		key := strings.ToLower(p)
 		if !seen[key] {
@@ -140,44 +148,5 @@ func (m *Manager) TrashRecords(root string, paths []string) (string, error) {
 			seen[key] = true
 		}
 	}
-	trash := filepath.Join(root, ".twinlog-trash")
-	if st, e := os.Lstat(trash); e == nil && (st.Mode()&os.ModeSymlink != 0 || !st.IsDir()) {
-		return "", fmt.Errorf("回收目录不是普通目录")
-	}
-	if err = os.MkdirAll(trash, 0755); err != nil {
-		return "", err
-	}
-	resolvedTrash, err := filepath.EvalSymlinks(trash)
-	if err != nil {
-		return "", err
-	}
-	if !strings.EqualFold(resolvedTrash, trash) {
-		return "", fmt.Errorf("回收目录不能指向其他位置")
-	}
-	batch, err := uniqueDir(trash, timeDir())
-	if err != nil {
-		return "", err
-	}
-	type move struct{ from, to string }
-	origins := map[string]string{}
-	for i, path := range validated {
-		origins[fmt.Sprintf("%d_%s", i+1, filepath.Base(path))] = path
-	}
-	if err = writeJSON(filepath.Join(batch, "restore.json"), origins); err != nil {
-		return "", err
-	}
-	moved := []move{}
-	for i, path := range validated {
-		dest := filepath.Join(batch, fmt.Sprintf("%d_%s", i+1, filepath.Base(path)))
-		if err = os.Rename(path, dest); err != nil {
-			for j := len(moved) - 1; j >= 0; j-- {
-				if rollback := os.Rename(moved[j].to, moved[j].from); rollback != nil {
-					return batch, fmt.Errorf("删除失败: %v；部分记录保留在 %s: %w", err, batch, rollback)
-				}
-			}
-			return "", err
-		}
-		moved = append(moved, move{path, dest})
-	}
-	return batch, nil
+	return remove(validated)
 }

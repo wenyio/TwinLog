@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -134,59 +135,63 @@ func TestHistoryLogPreview(t *testing.T) {
 	}
 }
 
-func TestTrashRecordsPreservesLogsAndSkipsListing(t *testing.T) {
+func TestDeleteRecordsValidatesBeforeCallingShell(t *testing.T) {
 	root := t.TempDir()
 	a, b := historyRecord(t, root, "one"), historyRecord(t, root, "two")
-	full := filepath.Join(root, "session", "full")
-	if err := os.MkdirAll(full, 0755); err != nil {
+	full := historyRecord(t, root, "full")
+	outside := historyRecord(t, t.TempDir(), "outside")
+	oldTrash := historyRecord(t, root, "old-trash")
+	trashRoot := filepath.Join(root, ".twinlog-trash")
+	if err := os.Mkdir(trashRoot, 0755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(full, "mcu.log"), []byte("full retained"), 0644); err != nil {
+	oldTrashDir := filepath.Join(trashRoot, "old-trash")
+	if err := os.Rename(oldTrash, oldTrashDir); err != nil {
 		t.Fatal(err)
+	}
+	session := historyRecord(t, root, "nested-session")
+	if err := os.WriteFile(filepath.Join(session, "session.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []*string{&root, &a, &b} {
+		resolved, err := filepath.EvalSymlinks(*p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		*p = resolved
 	}
 	m := NewManager(nil)
-	// Validate every target before moving any record.
-	if _, err := m.TrashRecords(root, []string{a, full}); err == nil {
-		t.Fatal("accepted full logs")
+	unexpectedDelete := func(paths []string) error {
+		t.Fatalf("called shell with unvalidated paths: %q", paths)
+		return nil
 	}
-	if _, err := os.Stat(a); err != nil {
-		t.Fatal("moved record before validating batch")
+	for _, path := range []string{full, outside, filepath.Dir(a), session, oldTrashDir, filepath.Join(root, "missing")} {
+		if err := m.deleteRecords(root, []string{a, path}, unexpectedDelete); err == nil {
+			t.Fatalf("accepted %q", path)
+		}
 	}
 	m.record = &Record{Path: a}
-	if _, err := m.TrashRecords(root, []string{b}); err == nil {
+	if err := m.deleteRecords(root, []string{b}, unexpectedDelete); err == nil {
 		t.Fatal("deleted while capturing")
 	}
 	m.record = nil
-	batch, err := m.TrashRecords(root, []string{a, b, a})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for i, original := range []string{a, b} {
-		if _, err := os.Stat(original); !os.IsNotExist(err) {
-			t.Fatalf("original still exists: %v", err)
+	shellErr := fmt.Errorf("simulated shell error")
+	err := m.deleteRecords(root, []string{a, b, a}, func(paths []string) error {
+		if !reflect.DeepEqual(paths, []string{a, b}) {
+			t.Fatalf("wrong targets: %q", paths)
 		}
-		path := filepath.Join(batch, fmt.Sprintf("%d_%s", i+1, filepath.Base(original)))
-		r, err := loadRecord(path)
-		if err != nil || r.Notes != "保留内容\n" {
-			t.Fatalf("notes not retained: %+v %v", r, err)
+		if !m.mu.TryLock() {
+			t.Fatal("continuous log writers blocked during shell operation")
 		}
-		logs, err := m.ReadRecordLogs(path, 0)
-		if err != nil || logs.MCU.Text != "保留内容\n" || logs.Android.Text != "保留内容\n" {
-			t.Fatal("logs not retained", err)
+		m.mu.Unlock()
+		return shellErr
+	})
+	if err != shellErr {
+		t.Fatalf("shell error was not returned: %v", err)
+	}
+	for _, path := range []string{a, b, full, oldTrashDir} {
+		if _, err := os.Stat(filepath.Join(path, "mcu.log")); err != nil {
+			t.Fatalf("log changed in %q: %v", path, err)
 		}
-	}
-	if b, err := os.ReadFile(filepath.Join(full, "mcu.log")); err != nil || string(b) != "full retained" {
-		t.Fatal("full logs changed", err)
-	}
-	if b, err := os.ReadFile(filepath.Join(batch, "restore.json")); err != nil || !strings.Contains(string(b), "1_one") {
-		t.Fatal("restore mapping missing", err)
-	}
-	records, err := m.ListRecords(root)
-	if err != nil || len(records) != 0 {
-		t.Fatalf("trashed records listed: %+v %v", records, err)
-	}
-	outside := historyRecord(t, t.TempDir(), "outside")
-	if _, err := m.TrashRecords(root, []string{outside}); err == nil {
-		t.Fatal("accepted record outside root")
 	}
 }

@@ -571,11 +571,6 @@ h1 {
   white-space: nowrap;
 }
 .app-select input {
-  height: 29px;
-  max-width: 350px;
-  min-width: 180px;
-  flex: 1;
-  background: var(--surface-subtle);
   font-size: 11px;
 }
 .app-select > span {
@@ -623,15 +618,29 @@ h1 {
 .log-pane strong {
   font-size: 12px;
 }
+.log-body {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
 .log-search {
+  position: absolute;
+  z-index: 1;
+  inset: 6px 12px auto auto;
+  width: min(338px, calc(100% - 18px));
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 4px;
-  padding: 4px 8px;
-  border-bottom: 1px solid var(--divider);
-  background: var(--surface-subtle);
-  flex-shrink: 0;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  box-shadow: 0 2px 9px #0000001c;
+}
+.log-search[data-bottom] {
+  inset-block: auto 6px;
 }
 .log-search input {
   flex: 1 1 90px;
@@ -639,12 +648,18 @@ h1 {
   height: 28px;
 }
 .log-search output {
-  flex: 1 0 48px;
+  flex: 0 1 auto;
+  min-width: 0;
   text-align: right;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
   font-size: 11px;
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
+}
+.log-search-actions {
+  display: flex;
+  flex: none;
+  margin-inline-start: auto;
 }
 .log-search .icon {
   flex: 0 0 27px;
@@ -1146,11 +1161,37 @@ main {
 .app-select label {
   width: 100%;
 }
-.app-select input {
-  max-width: none;
+.package-field {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  height: 29px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-subtle);
+}
+.package-field:focus-within {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+.package-field input {
   min-width: 0;
   flex: 1;
   width: 0;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  outline: none;
+}
+.package-field .package-clear {
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  margin-right: 2px;
+}
+.package-clear:focus-visible {
+  outline-offset: -2px;
 }
 .app-select .text-button {
   width: 28px;

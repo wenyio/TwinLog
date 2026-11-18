@@ -97,15 +97,32 @@ try {
       await page.evaluate(() => window.testLogs("android", 0, 5200));
       await pane.getByText("仅显示末尾 5000 行", { exact: true }).waitFor();
       assert.ok((await pre.textContent()).startsWith("android line 200\n"));
+      const logBounds = await pre.boundingBox();
+      const scrollAtOpen = await pre.evaluate((el) => el.scrollTop);
       await pre.focus();
       await page.keyboard.press("Control+f");
       const search = pane.getByRole("textbox", { name: "搜索当前预览" });
+      await search.waitFor();
+      assert.deepEqual(await pre.boundingBox(), logBounds, "search must not take up log space");
+      assert.equal(await pre.evaluate((el) => el.scrollTop), scrollAtOpen, "opening search must not move the log");
       await search.fill("AndRoId line 201");
       await pane.getByText("1 / 11", { exact: true }).waitFor();
       const highlighted = () => page.evaluate(() => [...CSS.highlights.get("log-match")][0].toString());
       assert.equal(await highlighted(), "android line 201");
       await search.press("Enter");
       await pane.getByText("2 / 11", { exact: true }).waitFor();
+      const match = await highlighted();
+      const layout = page.getByRole("group", { name: "日志布局" });
+      await layout.getByRole("button", { name: "上下", exact: true }).click();
+      assert.equal(await search.inputValue(), "AndRoId line 201");
+      assert.equal(await highlighted(), match);
+      await layout.getByRole("button", { name: "MCU", exact: true }).click();
+      assert.equal(await search.isVisible(), false);
+      assert.equal(await page.evaluate(() => CSS.highlights.has("log-match")), false);
+      await layout.getByRole("button", { name: "左右", exact: true }).click();
+      await pane.getByText("2 / 11", { exact: true }).waitFor();
+      assert.equal(await search.inputValue(), "AndRoId line 201");
+      assert.equal(await highlighted(), match);
       await search.press("Shift+Enter");
       await pane.getByText("1 / 11", { exact: true }).waitFor();
       const snapshot = await pre.textContent();
@@ -118,6 +135,29 @@ try {
       await pane.getByRole("button", { name: "回到最新" }).click();
       await page.waitForFunction(() => document.querySelectorAll(".log-pane pre")[1].textContent.endsWith("line 10699\n"));
       assert.ok(!(await pre.textContent()).includes("android line 201\n"));
+
+      // A first-line match under the floating bar must be visible even at scrollTop = 0.
+      await clear.click();
+      await page.evaluate(() => window.testLogs("android" + " ".repeat(37) + "first-hit", 0, 100));
+      await pre.getByText(/first-hit/).waitFor();
+      await pane.getByRole("button", { name: "查找当前预览" }).click();
+      await search.fill("first-hit line 0");
+      const bar = pane.getByRole("search");
+      await page.waitForFunction(() => document.querySelector(".log-search")?.hasAttribute("data-bottom"));
+      assert.ok(await bar.evaluate((el) => {
+        const hit = [...CSS.highlights.get("log-match")][0].getBoundingClientRect();
+        const bar = el.getBoundingClientRect();
+        return hit.bottom < bar.top;
+      }));
+      await page.setViewportSize({ width: 1080, height: 640 });
+      await page.getByRole("separator", { name: "调整 MCU 与 Android 日志宽度" }).press("End");
+      assert.ok(await bar.evaluate((el) => {
+        const box = el.getBoundingClientRect();
+        const body = el.parentElement.getBoundingClientRect();
+        const close = el.querySelector('[aria-label="关闭查找"]').getBoundingClientRect();
+        return box.left >= body.left && box.right < body.right && close.right <= box.right;
+      }), "search must fit the narrow split and keep close accessible");
+      await search.press("Escape");
       await page.getByRole("button", { name: "MCU", exact: true }).click();
       await page.keyboard.press("Control+f");
       await panes.first().getByRole("textbox", { name: "搜索当前预览" }).waitFor();

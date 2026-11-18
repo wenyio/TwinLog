@@ -168,16 +168,28 @@ func (a *App) ListRecords(root string) ([]capture.Record, error) { return a.mana
 func (a *App) ReadRecordLogs(path string) (capture.RecordLogs, error) {
 	return a.manager.ReadRecordLogs(path, a.GetConfig().PreviewLines)
 }
-func (a *App) DeleteRecords(paths []string) (string, error) {
-	answer, err := wruntime.MessageDialog(a.ctx, wruntime.MessageDialogOptions{
+func (a *App) DeleteRecords(paths []string) error {
+	root := a.GetConfig().OutputDir
+	return confirmRecordDeletion(len(paths), func(opts wruntime.MessageDialogOptions) (string, error) {
+		return wruntime.MessageDialog(a.ctx, opts)
+	}, func() error {
+		return a.manager.DeleteRecords(root, paths)
+	})
+}
+
+func confirmRecordDeletion(count int, ask func(wruntime.MessageDialogOptions) (string, error), remove func() error) error {
+	if count == 0 {
+		return fmt.Errorf("请选择需要删除的记录")
+	}
+	answer, err := ask(wruntime.MessageDialogOptions{
 		Type: wruntime.QuestionDialog, Title: "删除抓取记录",
-		Message: fmt.Sprintf("将选中的 %d 条记录移入保存目录下的 .twinlog-trash 回收目录？\n记录日志和备注会一起移入，完整日志 full 保留。可从回收目录手动找回。", len(paths)),
+		Message: fmt.Sprintf("确定删除选中的 %d 条抓取记录？\n记录日志和备注会一并删除，通常可从 Windows 回收站还原。完整日志 full 保留。", count),
 		Buttons: []string{"Yes", "No"}, DefaultButton: "No", CancelButton: "No",
 	})
 	if err != nil || answer != "Yes" {
-		return "", err
+		return err
 	}
-	return a.manager.TrashRecords(a.GetConfig().OutputDir, paths)
+	return remove()
 }
 func (a *App) ExportRecords(paths []string, includeFull bool) (string, error) {
 	path, e := wruntime.SaveFileDialog(a.ctx, wruntime.SaveDialogOptions{Title: "导出抓取记录", DefaultFilename: "TwinLog_" + time.Now().Format("20060102_150405") + ".zip", Filters: []wruntime.FileFilter{{DisplayName: "ZIP 压缩包", Pattern: "*.zip"}}})

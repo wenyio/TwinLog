@@ -90,7 +90,7 @@ type Backend = {
   SaveTitle(path: string, title: string): Promise<void>;
   ListRecords(root: string): Promise<RecordItem[]>;
   ReadRecordLogs(path: string): Promise<RecordLogs>;
-  DeleteRecords(paths: string[]): Promise<string>;
+  DeleteRecords(paths: string[]): Promise<void>;
   ExportRecords(paths: string[], full: boolean): Promise<string>;
   OpenFolder(path: string): Promise<void>;
 };

@@ -88,9 +88,11 @@ try {
       failTitleSave: false,
       failRead: false,
       deleteApproved: false,
+      failDeletePartially: false,
       deleted: [],
       configSaves: [],
       connectConfigs: [],
+      packageChanges: [],
     };
     window.go = {
       main: {
@@ -113,15 +115,20 @@ try {
             };
           },
           DeleteRecords: async (paths) => {
-            if (!window.calls.deleteApproved) return "";
-            window.calls.deleted.push(...paths);
+            if (!window.calls.deleteApproved) return;
+            const partial = window.calls.failDeletePartially;
             for (let i = records.length - 1; i >= 0; i--) {
-              if (paths.includes(records[i].path)) records.splice(i, 1);
+              const { path } = records[i];
+              if (paths.includes(path) && (!partial || path === "test/new")) {
+                window.calls.deleted.push(path);
+                records.splice(i, 1);
+              }
             }
-            return "test/.twinlog-trash/batch";
+            if (partial) throw Error("模拟部分删除失败");
           },
           ListPorts: async () => [{ name: "COM1", description: "" }],
           ListDevices: async () => [{ serial: "test", state: "device", model: "Test Android" }],
+          ListPackages: async () => ["com.example.app"],
           Connect: async (next) => {
             if (window.calls.failConnect) throw Error("模拟连接失败");
             window.calls.connectConfigs.push(structuredClone(next));
@@ -134,7 +141,11 @@ try {
             state.connected = false;
             emit("state");
           },
-          SetPackage: async () => {},
+          SetPackage: async (pkg) => {
+            window.calls.packageChanges.push(pkg);
+            state.config = { ...state.config, package: pkg };
+            emit("state");
+          },
           StartCapture: async (title, notes) => {
             window.calls.start++;
             if (window.calls.failStart) throw Error("模拟开始失败");
@@ -437,17 +448,24 @@ try {
   await page.waitForFunction(() => !document.querySelector('.delete-records').disabled);
   assert.equal(await page.locator('.history-row').count(), 2);
   assert.equal(await title.inputValue(), "退出前修改");
+  assert.equal(await page.locator('.history-row input:checked').count(), 1);
+  assert.deepEqual(await page.evaluate(() => window.calls.deleted), []);
   await notes.fill("删除前备注");
-  await page.evaluate(() => (window.calls.deleteApproved = true));
+  await selectAll.check();
+  await page.evaluate(() => {
+    window.calls.deleteApproved = true;
+    window.calls.failDeletePartially = true;
+  });
   await page.getByRole("button", { name: "删除所选", exact: true }).click();
-  await page.getByText("已将 1 条记录移入回收目录：test/.twinlog-trash/batch", { exact: true }).waitFor();
+  await page.getByText("模拟部分删除失败", { exact: false }).waitFor();
   assert.equal(await page.locator('.history-row').count(), 1);
   assert.equal(await title.inputValue(), "");
   assert.deepEqual(await page.evaluate(() => window.calls.deleted), ["test/new"]);
   assert.ok((await page.evaluate(() => window.calls.saves)).some((v) => v.notes === "删除前备注"));
-  assert.ok(await page.getByRole("button", { name: "删除所选", exact: true }).isDisabled());
-  await selectAll.check();
+  assert.ok(await selectAll.isChecked());
+  await page.evaluate(() => (window.calls.failDeletePartially = false));
   await page.getByRole("button", { name: "删除所选", exact: true }).click();
+  await page.getByText("已删除 1 条记录", { exact: true }).waitFor();
   await page.getByText("还没有抓取记录", { exact: true }).waitFor();
   assert.ok(await selectAll.isDisabled());
   assert.equal(await selectAll.isChecked(), false);
@@ -501,10 +519,35 @@ try {
   await assertSinglePane("Android Logcat");
   assert.ok(await capture.getByText("Android 应用").isVisible());
   assert.equal(await page.evaluate(() => window.calls.connectConfigs.at(-1).serialPort), "");
+  const packageField = capture.getByLabel("Android 应用", { exact: true });
+  const clearPackage = capture.getByRole("button", { name: "清空 Android 应用", exact: true });
+  await capture.getByRole("button", { name: "加载应用", exact: true }).click();
+  await page.locator('#packages option[value="com.example.app"]').waitFor({ state: "attached" });
+  assert.equal(await clearPackage.count(), 0);
+  await packageField.fill("com.example.draft");
+  await clearPackage.click();
+  assert.equal(await packageField.inputValue(), "");
+  assert.deepEqual(await page.evaluate(() => window.calls.packageChanges), []);
+  await packageField.fill("com.example.app");
+  await packageField.blur();
+  await page.waitForFunction(() => window.calls.packageChanges.at(-1) === "com.example.app");
+  await packageField.focus();
+  await page.keyboard.press("Tab");
+  assert.equal(await clearPackage.evaluate((el) => el === document.activeElement), true);
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(() => document.activeElement?.id === "package");
+  assert.equal(await packageField.inputValue(), "");
+  assert.equal(await clearPackage.count(), 0);
+  assert.deepEqual(await page.evaluate(() => window.calls.packageChanges), ["com.example.app", ""]);
   await page.getByRole("button", { name: /仅串口记录/ }).click();
   await assertSinglePane("MCU 串口");
+  await page.keyboard.press("Control+f");
+  const recordSearch = page.getByRole("textbox", { name: "搜索当前预览" });
+  await recordSearch.fill("MCU");
+  await page.getByText("1 / 1", { exact: true }).waitFor();
   await page.getByRole("button", { name: "返回实时", exact: true }).click();
   await assertSinglePane("Android Logcat");
+  assert.equal(await recordSearch.count(), 0);
   await connectionTab.click();
   await disconnectButton.click();
   await mcuSelect.selectOption("COM1");
@@ -513,7 +556,7 @@ try {
   assert.equal(await pane.count(), 2);
   assert.equal(await layouts.getByRole("button", { name: "上下", exact: true }).getAttribute("aria-pressed"), "true");
   console.log(
-    "PASS: capture flow, title and notes, export and exit flush, history, deletion and single-source layout",
+    "PASS: capture flow, title and notes, export and exit flush, history, deletion, single-source layout and package clearing",
   );
 } finally {
   await browser?.close();
