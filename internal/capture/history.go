@@ -76,15 +76,20 @@ func (m *Manager) ReadRecordLogs(path string, lines int) (RecordLogs, error) {
 	if err != nil {
 		return RecordLogs{}, err
 	}
+	return readSourceLogs(path, r.Source, lines)
+}
+
+func readSourceLogs(path, source string, lines int) (RecordLogs, error) {
 	var logs RecordLogs
+	var err error
 	lines = NormalizePreviewLines(lines)
-	if r.Source != "android" {
+	if source != "android" {
 		logs.MCU, err = readLogPreview(filepath.Join(path, "mcu.log"), lines)
 		if err != nil {
 			return RecordLogs{}, fmt.Errorf("读取 MCU 日志: %w", err)
 		}
 	}
-	if r.Source != "mcu" {
+	if source != "mcu" {
 		logs.Android, err = readLogPreview(filepath.Join(path, "android.log"), lines)
 		if err != nil {
 			return RecordLogs{}, fmt.Errorf("读取 Android 日志: %w", err)

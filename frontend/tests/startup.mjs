@@ -43,9 +43,10 @@ try {
           if (adb !== "custom-adb") throw Error("未使用保存的 ADB 路径");
           await wait("adb"); return [{ serial: "test-device", state: "device", model: "测试设备" }];
         },
-        ListRecords: async (root) => {
+        ListSessions: async (root) => {
           if (root === "old") await wait("history");
-          return [record(root)];
+          const r = record(root);
+          return [{ path: root, startedAt: r.startedAt, managed: false, records: [r], full: null }];
         },
         SelectDirectory: async () => "new",
         SaveConfig: async () => {},

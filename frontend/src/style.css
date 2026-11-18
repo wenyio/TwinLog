@@ -258,33 +258,81 @@ label {
   line-height: 1.9;
   color: var(--text-muted);
 }
+.session-row,
 .history-row {
   display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 10px 8px;
+  align-items: center;
+  gap: 4px;
   border: 1px solid transparent;
-  border-radius: 7px;
-  margin-bottom: 5px;
+  border-radius: 6px;
 }
+.session-row:hover, .history-row:hover { background: var(--surface-subtle); }
+.session-toggle, .history-row .history-item { flex: 1; min-width: 0; }
+.session-toggle { justify-content: flex-start; min-height: 33px; padding: 0 4px; text-align: left; }
+.session-toggle > svg { flex: none; }
+.session-toggle > span:first-of-type { overflow: hidden; text-overflow: ellipsis; }
+.session-count {
+  margin-left: auto;
+  padding: 1px 4px;
+  min-width: 18px;
+  text-align: center;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  background: var(--surface-selected);
+  border-radius: 4px;
+}
+.session-children { padding-left: 15px; }
+.session-empty { display: block; padding: 6px; color: var(--text-muted); font-size: 11px; }
+.session-writing { flex: none; display: inline-flex; color: var(--text-secondary); }
+.session-writing svg { animation: session-spin 1s linear infinite; }
+@keyframes session-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .session-writing svg { animation: none; } }
 .history-row.active {
   background: var(--surface-selected);
   border-color: var(--border);
 }
 .history-row input {
-  margin-top: 4px;
+  flex: none;
+  margin: 0 3px;
 }
-.history-row button {
+.history-row .history-item {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 5px;
+  gap: 3px;
   text-align: left;
-  padding: 0;
+  padding: 5px 2px;
   white-space: normal;
   overflow: hidden;
-  width: 100%;
+  min-height: 32px;
 }
+.full-row { padding-left: 5px; }
+.full-row .history-item { flex-direction: row; align-items: center; justify-content: flex-start; gap: 6px; }
+.full-row .history-item > svg { flex: none; }
+.full-row .history-item > :is(small, .session-writing) { margin-left: auto; flex: none; }
+.row-menu-trigger { flex: none; }
+.row-popover {
+  position: fixed;
+  z-index: 30;
+  display: grid;
+  gap: 2px;
+  min-width: 145px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px #0002;
+}
+.row-popover button { justify-content: flex-start; padding: 5px 8px; min-height: 30px; }
+.row-popover button:hover:not(:disabled) { background: var(--surface-selected); }
+.row-popover .menu-danger { color: #a13e32; }
+.row-popover .menu-danger:not(:first-child) { border-top: 1px solid var(--divider); }
+.batch-actions { display: flex; align-items: center; gap: 6px; margin-top: 9px; }
+.batch-actions .export { flex: 1; margin: 0; }
+.batch-actions .delete-records { flex: none; color: #a13e32; }
+.history-row .session-writing { margin-left: auto; }
+.full-row strong { white-space: nowrap; }
 .history-row strong {
   display: -webkit-box;
   -webkit-box-orient: vertical;

@@ -120,7 +120,7 @@ func (m *Manager) ListRecords(root string) ([]Record, error) {
 		if !d.IsDir() {
 			return nil
 		}
-		if d.Name() == "full" || d.Name() == ".twinlog-trash" {
+		if path != root && (strings.EqualFold(d.Name(), "full") || strings.EqualFold(d.Name(), ".twinlog-trash")) {
 			return filepath.SkipDir
 		}
 		if _, e := os.Stat(filepath.Join(path, "record.json")); e != nil {
@@ -186,20 +186,59 @@ func fullLogsDisabled(session string) bool {
 		meta.Config.SaveFullLogs != nil && !*meta.Config.SaveFullLogs
 }
 
+func ExportFilename(paths []string, now time.Time) (string, error) {
+	fallback := "TwinLog_" + now.Format("20060102_150405") + ".zip"
+	if len(paths) != 1 {
+		return fallback, nil
+	}
+	r, err := loadRecord(paths[0])
+	if err != nil {
+		return "", err
+	}
+	title := strings.Trim(strings.TrimSpace(r.Title), " .")
+	if title == "" {
+		return fallback, nil
+	}
+	if ext := filepath.Ext(title); strings.EqualFold(ext, ".zip") {
+		title = strings.TrimSuffix(title, ext)
+	}
+	name := safeName(title)
+	// Windows reserves device names even with an extension.
+	base, _, _ := strings.Cut(name, ".")
+	if !filepath.IsLocal(strings.TrimRight(base, " ")) {
+		name = "_" + name
+	}
+	return name + ".zip", nil
+}
+
 func (m *Manager) Export(paths []string, destination string, includeFull bool) error {
-	if len(paths) == 0 {
+	return m.exportLogs(paths, nil, destination, includeFull)
+}
+
+func (m *Manager) ExportSelection(root string, paths, fullSessions []string, destination string) error {
+	fullDirs := make([]string, 0, len(fullSessions))
+	for _, session := range fullSessions {
+		p, err := managedSession(root, session)
+		if err != nil {
+			return err
+		}
+		dir := filepath.Join(p, "full")
+		if err = directDir(dir); err != nil {
+			return fmt.Errorf("完整日志不可导出: %w", err)
+		}
+		if fullLogInfo(dir) == nil {
+			return fmt.Errorf("完整日志不存在: %s", dir)
+		}
+		fullDirs = append(fullDirs, dir)
+	}
+	return m.exportLogs(paths, fullDirs, destination, false)
+}
+
+func (m *Manager) exportLogs(paths, fullDirs []string, destination string, includeFull bool) error {
+	if len(paths) == 0 && len(fullDirs) == 0 {
 		return fmt.Errorf("请选择需要导出的记录")
 	}
-	m.mu.Lock()
-	if includeFull && m.connected {
-		m.mu.Unlock()
-		return fmt.Errorf("导出完整日志前请先断开连接")
-	}
-	active := ""
-	if m.record != nil {
-		active = m.record.Path
-	}
-	m.mu.Unlock()
+	state := m.State()
 	dest, err := filepath.Abs(destination)
 	if err != nil {
 		return err
@@ -212,7 +251,11 @@ func (m *Manager) Export(paths []string, destination string, includeFull bool) e
 		if e != nil {
 			return e
 		}
-		if p == active {
+		p, e = filepath.EvalSymlinks(p)
+		if e != nil {
+			return e
+		}
+		if state.ActiveRecord != nil && sameResolvedPath(state.ActiveRecord.Path, p) {
 			return fmt.Errorf("请先停止当前抓取")
 		}
 		if _, exists := dirs[p]; exists {
@@ -242,8 +285,16 @@ func (m *Manager) Export(paths []string, destination string, includeFull bool) e
 			if _, e := os.Lstat(full); os.IsNotExist(e) && fullLogsDisabled(s) {
 				continue
 			}
-			dirs[full] = filepath.Join(filepath.Base(s), "full")
+			fullDirs = append(fullDirs, full)
 		}
+	}
+	for _, dir := range fullDirs {
+		s := filepath.Dir(dir)
+		if state.Connected && (sameResolvedPath(state.SessionDir, s) || sameResolvedPath(s, state.SessionDir)) {
+			return fmt.Errorf("导出完整日志前请先断开此会话的设备连接")
+		}
+		dirs[dir] = filepath.Join(filepath.Base(s), "full")
+		sessions[s] = true
 	}
 	for dir := range dirs {
 		rel, e := filepath.Rel(dir, dest)

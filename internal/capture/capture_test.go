@@ -72,6 +72,10 @@ func TestFullCaptureNotesExport(t *testing.T) {
 	if e := m.ingestLocked("mcu", []byte("before\npartial"), at); e != nil {
 		t.Fatal(e)
 	}
+	beforeAndroid := "11-17 11:56:10.744 10123 100 101 D APP: before\n"
+	if e := m.ingestLocked("android", []byte(beforeAndroid), at); e != nil {
+		t.Fatal(e)
+	}
 	r, e := m.StartCapture("中文/标题", "initial")
 	if e != nil {
 		t.Fatal(e)
@@ -87,6 +91,11 @@ func TestFullCaptureNotesExport(t *testing.T) {
 	if e = m.ingestLocked("android", []byte(app+sys), at); e != nil {
 		t.Fatal(e)
 	}
+	preview := m.drainPreviewsLocked()
+	if preview[0].RecordPath != "" || !strings.Contains(preview[0].Text, "before") || preview[1].Text != beforeAndroid+app ||
+		preview[2].RecordPath != r.Path || preview[3].RecordPath != r.Path {
+		t.Fatalf("incorrect preview scope: %+v", preview)
+	}
 	if e = m.SaveNotes(r.Path, "更新备注"); e != nil {
 		t.Fatal(e)
 	}
@@ -100,15 +109,15 @@ func TestFullCaptureNotesExport(t *testing.T) {
 	m.android.close()
 	m.connected = false
 	b, _ := os.ReadFile(filepath.Join(r.Path, "android.log"))
-	if string(b) != app {
+	if string(b) != app || preview[3].Text != string(b) {
 		t.Fatalf("capture android %q", b)
 	}
 	b, _ = os.ReadFile(filepath.Join(m.sessionDir, "full", "android.log"))
-	if string(b) != app+sys {
+	if string(b) != beforeAndroid+app+sys {
 		t.Fatal("full filtered")
 	}
 	b, _ = os.ReadFile(filepath.Join(r.Path, "mcu.log"))
-	if strings.Contains(string(b), "before") || strings.Contains(string(b), "after") || !strings.HasPrefix(string(b), "[2026-11-17 11:56:10.745]  tail") {
+	if preview[2].Text != string(b) || strings.Contains(string(b), "before") || strings.Contains(string(b), "after") || !strings.HasPrefix(string(b), "[2026-11-17 11:56:10.745]  tail") {
 		t.Fatalf("MCU boundary: %q", b)
 	}
 	records, e := m.ListRecords(root)

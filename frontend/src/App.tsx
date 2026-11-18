@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import LogSplit from "./LogSplit";
 import LogPane, { emptyPreview, trimPreview } from "./LogPane";
+import SessionList, { recordTitle as displayTitle } from "./SessionList";
 import { version } from "../package.json";
 import {
   Activity,
@@ -33,6 +34,7 @@ import {
   State,
   RecordItem,
   RecordLogs,
+  Session,
   LogSource,
   Port,
   Device,
@@ -51,10 +53,8 @@ const size = (n: number) =>
   n >= 1048576
     ? (n / 1048576).toFixed(1) + " MB"
     : (n / 1024).toFixed(1) + " KB";
-const time = (s: string) =>
-  s ? new Date(s).toLocaleString("zh-CN", { hour12: false }) : "";
-const displayTitle = (title?: string) => title?.trim() || "未命名";
 type RecordFields = Pick<RecordItem, "title" | "notes">;
+type CapturePreview = Record<LogSource, typeof emptyPreview>;
 type LogLayout = "columns" | "rows" | "mcu" | "android";
 function loadLayout() {
   try {
@@ -87,9 +87,10 @@ export default function App() {
     [ports, setPorts] = useState<Port[]>([]),
     [devices, setDevices] = useState<Device[]>([]),
     [packages, setPackages] = useState<string[]>([]);
-  const [records, setRecords] = useState<RecordItem[]>([]),
+  const [sessions, setSessions] = useState<Session[]>([]),
     [selected, setSelected] = useState<Set<string>>(new Set()),
     [view, setView] = useState<RecordItem | null>(null),
+    [fullView, setFullView] = useState<Session | null>(null),
     [recordLogs, setRecordLogs] = useState<RecordLogs | null>(null),
     [title, setTitle] = useState(""),
     [notes, setNotes] = useState(""),
@@ -101,20 +102,28 @@ export default function App() {
     [includeFull, setIncludeFull] = useState(false),
     [mcu, setMcu] = useState(emptyPreview),
     [android, setAndroid] = useState(emptyPreview),
+    [capturePreviews, setCapturePreviews] = useState<Record<string, CapturePreview>>({}),
     [androidPreviewKey, setAndroidPreviewKey] = useState(0),
     [searchPane, setSearchPane] = useState<string | null>(null),
     [saveStatus, setSaveStatus] = useState<"saved" | "pending" | "failed">("saved");
+  const records = useMemo(() => sessions.flatMap((s) => s.records), [sessions]);
   const lastPane = useRef<LogSource>("mcu");
   const mcuFind = useRef<HTMLButtonElement>(null);
   const androidFind = useRef<HTMLButtonElement>(null);
   const packageInput = useRef<HTMLInputElement>(null);
   const focusPackage = useRef(false);
   const previewLines = useRef(config.previewLines);
+  const capturePath = useRef<string | null>(null);
+  const startingCapture = useRef(false);
   useEffect(() => {
     const lines = config.previewLines;
     previewLines.current = lines;
     setMcu((value) => trimPreview(value.text, lines, value.truncated));
     setAndroid((value) => trimPreview(value.text, lines, value.truncated));
+    setCapturePreviews((items) => Object.fromEntries(Object.entries(items).map(([path, preview]) => [path, {
+      mcu: trimPreview(preview.mcu.text, lines, preview.mcu.truncated),
+      android: trimPreview(preview.android.text, lines, preview.android.truncated),
+    }])));
   }, [config.previewLines]);
   const pending = useRef<({ path: string } & Partial<RecordFields>) | null>(null),
     draft = useRef({ title: "", notes: "" }),
@@ -149,14 +158,15 @@ export default function App() {
   const refreshRecords = async (root = config.outputDir, isCurrent = () => true) => {
     const request = ++recordsRequest.current;
     if (desktop() && root) {
-      const items = (await api.ListRecords(root)) || [];
+      const items = (await api.ListSessions(root)) || [];
       if (!isCurrent() || request !== recordsRequest.current) return;
       const current = viewRef.current;
-      setRecords(items.map((r) => r.path === current?.path && r.path === pending.current?.path
-        ? { ...r, title: current.title, notes: current.notes }
-        : r));
+      setSessions(items.map((s) => ({ ...s, records: s.records.map((r) =>
+        r.path === current?.path && r.path === pending.current?.path
+          ? { ...r, title: current.title, notes: current.notes } : r) })));
+      const valid = new Set(items.flatMap((s) => s.records.map((r) => r.path)));
       setSelected((s) => new Set([...s].filter((path) =>
-        items.some((r) => r.path === path && r.path !== stateRef.current.activeRecord?.path),
+        valid.has(path) && path !== stateRef.current.activeRecord?.path,
       )));
       return items;
     }
@@ -206,9 +216,9 @@ export default function App() {
       return;
     }
     const { path } = current;
-    setRecords((rs) =>
-      rs.map((r) => (r.path === path ? { ...r, [field]: text } : r)),
-    );
+    setSessions((items) => items.map((s) => s.records.some((r) => r.path === path)
+      ? { ...s, records: s.records.map((r) => r.path === path ? { ...r, [field]: text } : r) }
+      : s));
     viewRef.current = { ...current, [field]: text };
     setView(viewRef.current);
     pending.current = { ...pending.current, path, [field]: text };
@@ -263,8 +273,18 @@ export default function App() {
       }),
       off2 = window.runtime?.EventsOn(
         "logs",
-        (b: { source: string; text: string }) => {
+        (b: { source: LogSource; text: string; recordPath?: string }) => {
           const lines = previewLines.current;
+          const path = b.recordPath;
+          if (path) {
+            if (!startingCapture.current && capturePath.current !== path) return;
+            setCapturePreviews((items) => {
+              const preview = items[path] ?? { mcu: emptyPreview, android: emptyPreview };
+              const previous = preview[b.source];
+              return { ...items, [path]: { ...preview, [b.source]: trimPreview(previous.text + b.text, lines, previous.truncated) } };
+            });
+            return;
+          }
           const update = b.source === "mcu" ? setMcu : setAndroid;
           update((previous) => trimPreview(previous.text + b.text, lines, previous.truncated));
         },
@@ -291,6 +311,7 @@ export default function App() {
     await flush();
     if (viewRef.current?.path === r.path) r = viewRef.current;
     const logs = await api.ReadRecordLogs(r.path);
+    setFullView(null);
     setRecordLogs(logs);
     setOperationsTab("capture");
     setLayout((v) => ({ ...v, right: true }));
@@ -299,26 +320,48 @@ export default function App() {
     setTitle(r.title);
     setNotes(r.notes);
   };
+  const resetView = () => {
+    viewRef.current = null;
+    setView(null);
+    setFullView(null);
+    setRecordLogs(null);
+    setTitle(draft.current.title);
+    setNotes(draft.current.notes);
+  };
+  const changeFullView = async (session: Session) => {
+    await flush();
+    const logs = await api.ReadFullLogs(session.path);
+    resetView();
+    setFullView(session);
+    setRecordLogs(logs);
+  };
   const prepareCapture = () =>
     run("新建抓取", async () => {
       await flush();
-      viewRef.current = null;
-      setView(null);
-      setRecordLogs(null);
-      setTitle(draft.current.title);
-      setNotes(draft.current.notes);
+      resetView();
       setLayout((v) => ({ ...v, right: true }));
       setOperationsTab(stateRef.current.connected ? "capture" : "connection");
       focusTitle.current = stateRef.current.connected;
     });
+  const openFull = (session: Session) => {
+    const current = stateRef.current;
+    if (current.capturing) return;
+    if (current.connected && current.sessionDir === session.path) {
+      if (viewRef.current || fullView) return prepareCapture();
+      return;
+    }
+    return run("打开完整日志", () => changeFullView(session));
+  };
   const chooseDir = () =>
     run("选择目录", async () => {
       const p = await api.SelectDirectory();
       if (p) {
+        await flush();
         const c = { ...config, outputDir: p };
-        setConfig(c);
-        setSelected(new Set());
         await api.SaveConfig(c);
+        setConfig(c);
+        resetView();
+        setSelected(new Set());
         await refreshRecords(p);
       }
     });
@@ -340,6 +383,8 @@ export default function App() {
       setFallbackSource(null);
       setMcu(emptyPreview);
       setAndroid(emptyPreview);
+      capturePath.current = null;
+      setCapturePreviews({});
       try {
         await api.Connect(next);
       } catch (e) {
@@ -352,16 +397,10 @@ export default function App() {
       }
       setConfig(next);
       setState(await api.GetState());
-      if (viewRef.current) {
-        viewRef.current = null;
-        setView(null);
-        setRecordLogs(null);
-        setTitle(draft.current.title);
-        setNotes(draft.current.notes);
-      }
+      resetView();
       setOperationsTab("capture");
       focusTitle.current = true;
-      setIncludeFull(false);
+      await refreshRecords(next.outputDir);
     });
   const disconnect = () =>
     run("断开连接", async () => {
@@ -376,7 +415,17 @@ export default function App() {
       await flush();
       if (state.config.androidSerial && config.package !== state.config.package)
         await api.SetPackage(config.package);
-      const r = await api.StartCapture(title, notes);
+      setCapturePreviews({});
+      startingCapture.current = true;
+      let r: RecordItem;
+      try {
+        r = await api.StartCapture(title, notes);
+        capturePath.current = r.path;
+        setCapturePreviews((items) => items[r.path] ? { [r.path]: items[r.path] } : {});
+      } finally {
+        startingCapture.current = false;
+      }
+      setFullView(null);
       draft.current = { title: "", notes: "" };
       viewRef.current = r;
       setView(r);
@@ -389,6 +438,8 @@ export default function App() {
     run("停止抓取", async () => {
       await flush();
       const r = await api.StopCapture();
+      capturePath.current = null;
+      setCapturePreviews({});
       viewRef.current = r;
       setView(r);
       setRecordLogs(null);
@@ -398,36 +449,46 @@ export default function App() {
       await refreshRecords();
       setRecordLogs(await api.ReadRecordLogs(r.path));
     });
-  const deleteRecords = () =>
+  const deleteRecords = (paths: string[]) =>
     run("删除记录", async () => {
       await flush();
-      const paths = [...selected];
       try {
         await api.DeleteRecords(paths);
       } finally {
         // The shell can cancel or delete only part of the selection.
-        const items = await refreshRecords();
+        const items = (await refreshRecords())?.flatMap((s) => s.records);
         const current = viewRef.current;
         if (items && current && paths.includes(current.path) && !items.some((r) => r.path === current.path)) {
-          viewRef.current = null;
-          setView(null);
-          setRecordLogs(null);
-          setTitle(draft.current.title);
-          setNotes(draft.current.notes);
+          resetView();
         }
         const removed = items ? paths.filter((path) => !items.some((r) => r.path === path)).length : 0;
         if (removed) setNotice(`已删除 ${removed} 条记录`);
       }
     });
-  const exportRecords = () =>
+  const deleteSession = (path: string, fullOnly: boolean) =>
+    run(fullOnly ? "删除完整日志" : "删除会话", async () => {
+      await flush();
+      try {
+        await api.DeleteSessionLogs(path, fullOnly);
+      } finally {
+        const items = await refreshRecords();
+        const remaining = items?.find((s) => s.path === path);
+        if (items && (fullOnly ? !remaining?.full : !remaining)) {
+          if (fullView?.path === path || (!fullOnly && sessions.find((s) => s.path === path)?.records.some((r) => r.path === viewRef.current?.path))) resetView();
+          setNotice(fullOnly ? "已删除完整日志" : "已删除会话");
+        }
+      }
+    });
+  const exportRecords = (paths: string[], fullSessions: string[] = [], omitted = 0) =>
     run("正在导出", async () => {
       await flush();
-      const p = await api.ExportRecords([...selected], includeFull);
-      if (p) setNotice("已导出：" + p);
+      const p = await api.ExportLogs(paths, fullSessions);
+      if (p) setNotice("已导出：" + p + (omitted ? ` · ${omitted} 个会话未附带完整日志` : ""));
     });
   const locked = !!busy,
     live = state.capturing && view?.path === state.activeRecord?.path,
-    history = !!view && !live;
+    recordHistory = !!view && !live,
+    history = recordHistory || !!fullView;
   const packageLocked = state.capturing || history || locked;
   const applyPackage = (pkg: string) => {
     if (!packageLocked && state.connected && pkg !== state.config.package) {
@@ -440,17 +501,27 @@ export default function App() {
   };
   const activeTitle = displayTitle(live ? view?.title : state.activeRecord?.title);
   const historyHint = !recordLogs
-    ? "日志未加载，可重新点击记录重试"
+    ? `日志未加载，可重新点击${fullView ? "完整日志" : "记录"}重试`
     : recordLogs.mcu.truncated || recordLogs.android.truncated
-      ? "仅预览日志末尾，全文请打开记录目录"
+      ? `仅预览日志末尾，全文请打开${fullView ? "完整日志" : "记录"}目录`
       : null;
   const savingFullLogs = state.config.saveFullLogs !== false;
   const currentDevices = state.connected ? state.config : config;
-  const singleSource = history ? view.source : currentDevices.serialPort
+  const singleSource = fullView ? fullView.full?.source : recordHistory ? view.source : currentDevices.serialPort
     ? (currentDevices.androidSerial ? undefined : "mcu")
     : (currentDevices.androidSerial ? "android" : undefined);
   const logLayout = singleSource ?? layout.mode;
-  const previewKey = history ? `record:${view.path}` : `live:${state.sessionDir}`;
+  const viewPath = fullView?.full?.path ?? view?.path;
+  const previewKey = history ? `history:${viewPath}` : live ? `capture:${viewPath}` : `live:${state.sessionDir}`;
+  const capturePreview = live && view ? capturePreviews[view.path] : undefined;
+  const clearPreview = (source: LogSource) => {
+    if (live && view) {
+      const path = view.path;
+      setCapturePreviews((items) => items[path] ? { ...items, [path]: { ...items[path], [source]: emptyPreview } } : items);
+    } else {
+      (source === "mcu" ? setMcu : setAndroid)(emptyPreview);
+    }
+  };
   const mcuKey = `${previewKey}/mcu`;
   const androidKey = `${previewKey}/android/${history ? 0 : androidPreviewKey}`;
   useEffect(() => {
@@ -471,7 +542,12 @@ export default function App() {
     : currentDevices.serialPort ? `仅串口 · ${currentDevices.serialPort}`
     : currentDevices.androidSerial ? `仅 Android · ${currentDevices.androidSerial}` : "未选择设备";
   const selectable = records.filter((r) => r.path !== state.activeRecord?.path);
-  const selectedCount = selectable.filter((r) => selected.has(r.path)).length;
+  const selectedPaths = selectable.filter((r) => selected.has(r.path)).map((r) => r.path);
+  const selectedCount = selectedPaths.length;
+  const selectedSessions = sessions.filter((s) => s.records.some((r) => selected.has(r.path) && r.path !== state.activeRecord?.path));
+  const attachable = selectedSessions.filter((s) => s.full && (!state.connected || state.sessionDir !== s.path));
+  const attaching = includeFull && !!attachable.length;
+  const omitted = attaching ? selectedSessions.length - attachable.length : 0;
   const allSelected = selectable.length > 0 && selectedCount === selectable.length;
   useEffect(() => {
     if (selectAll.current) selectAll.current.indeterminate = selectedCount > 0 && !allSelected;
@@ -491,14 +567,14 @@ export default function App() {
         <div className="sidebar-top">
           <div>
             <h2>
-              抓取记录 <span>{records.length}</span>
+              日志会话 <span>{sessions.length}</span>
             </h2>
           </div>
           <button
             className="icon"
-            title="刷新记录"
+            title="刷新会话"
             disabled={locked}
-            onClick={() => run("刷新记录", async () => { await refreshRecords(); })}
+            onClick={() => run("刷新会话", async () => { await refreshRecords(); })}
           >
             <RefreshCw size={16} />
           </button>
@@ -515,91 +591,50 @@ export default function App() {
             />
             全选{selectedCount ? " · " + selectedCount : ""}
           </label>
-          <button
-            className="delete-records"
-            aria-label="删除所选"
-            title={state.capturing ? "请先停止当前抓取" : "移入回收目录，保留完整日志"}
-            disabled={!selectedCount || locked || state.capturing}
-            onClick={deleteRecords}
-          >
-            <Trash2 size={14} />删除
-          </button>
         </div>
-        <div className="history-list">
-          {!records.length ? (
-            <div className="history-empty">
-              <FileText size={30} />
-              <b>还没有抓取记录</b>
-            </div>
-          ) : (
-            records.map((r) => (
-              <div
-                key={r.path}
-                className={
-                  "history-row " + (view?.path === r.path ? "active" : "")
-                }
-              >
-                <input
-                  type="checkbox"
-                  aria-label={"选择 " + displayTitle(r.title)}
-                  checked={selected.has(r.path)}
-                  disabled={locked || r.path === state.activeRecord?.path}
-                  onChange={(e) =>
-                    setSelected((s) => {
-                      const n = new Set(s);
-                      if (e.target.checked) n.add(r.path);
-                      else n.delete(r.path);
-                      return n;
-                    })
-                  }
-                />
-                <button
-                  title={displayTitle(r.title)}
-                  aria-current={view?.path === r.path ? "page" : undefined}
-                  onClick={() => run("打开记录", async () => changeView(r))}
-                  disabled={state.capturing || locked}
-                >
-                  <strong>{displayTitle(r.title)}</strong>
-                  <span>{time(r.startedAt)}</span>
-                  <small>
-                    {r.interrupted
-                      ? "中断"
-                      : !r.endedAt
-                        ? "抓取中"
-                        : r.package || "全部应用"}
-                    {r.filterGaps ? " · 应用过滤有缺口" : ""}
-                  </small>
-                </button>
-              </div>
-            ))
-          )}
-        </div>
+        <SessionList sessions={sessions} selected={selected} viewPath={viewPath} state={state} locked={locked}
+          onSelect={(path, checked) => setSelected((s) => {
+            const next = new Set(s);
+            if (checked) next.add(path);
+            else next.delete(path);
+            return next;
+          })}
+          onRecord={(r) => run("打开记录", () => changeView(r))}
+          onFull={openFull}
+          onExport={exportRecords} onDeleteRecords={deleteRecords} onDeleteSession={deleteSession}
+          onOpenFolder={(path) => run("打开目录", () => api.OpenFolder(path))} />
         <div className="export-panel">
-          <label title={state.connected ? "附带完整日志需先断开连接" : ""}>
+          <label title={!attachable.length ? "所选记录没有可导出的完整日志" : ""}>
             <input
               type="checkbox"
-              checked={includeFull}
-              disabled={state.connected || locked}
+              checked={attaching}
+              disabled={!attachable.length || locked}
               onChange={(e) => setIncludeFull(e.target.checked)}
             />
             附带完整日志
           </label>
-
+          {!!omitted && <small>{omitted} 个会话的完整日志不可用，不会附带</small>}
+          <div className="batch-actions">
           <button
             className="secondary export"
             disabled={
-              !selected.size ||
+              !selectedCount ||
               locked ||
-              state.capturing ||
-              (includeFull && state.connected)
+              state.capturing
             }
-            onClick={exportRecords}
+            onClick={() => exportRecords(selectedPaths, attaching ? attachable.map((s) => s.path) : [], omitted)}
           >
             <Download size={16} />
             {busy === "正在导出"
               ? "正在导出…"
-              : "导出所选" + (selected.size ? " · " + selected.size : "")}
+              : "导出所选" + (selectedCount ? " · " + selectedCount : "")}
           </button>
+          <button className="icon delete-records" aria-label="删除所选"
+            title={state.capturing ? "请先停止当前抓取" : "删除所选记录，保留完整日志"}
+            disabled={!selectedCount || locked || state.capturing} onClick={() => deleteRecords(selectedPaths)}>
+            <Trash2 size={15} />
+          </button>
+          </div>
         </div>
       </aside>
       <main>
@@ -657,9 +692,9 @@ export default function App() {
             className="icon"
             title="打开日志目录"
             aria-label="打开日志目录"
-            disabled={!(view?.path || state.sessionDir) || locked}
+            disabled={!(viewPath || state.sessionDir) || locked}
             onClick={() =>
-              run("打开目录", async () => api.OpenFolder(view?.path || state.sessionDir))
+              run("打开目录", async () => api.OpenFolder(viewPath || state.sessionDir))
             }
           >
             <FolderOpen size={17} />
@@ -715,8 +750,8 @@ export default function App() {
         {history && (
           <div className="history-banner">
             <div className="history-summary">
-              <span title={view.title}>
-                历史日志 · <strong>{displayTitle(view.title)}</strong>
+              <span title={fullView ? new Date(fullView.startedAt).toLocaleString("zh-CN", { hour12: false }) : view?.title}>
+                {fullView ? <>完整日志 · <strong>{new Date(fullView.startedAt).toLocaleString("zh-CN", { hour12: false })}</strong></> : <>历史日志 · <strong>{displayTitle(view?.title)}</strong></>}
               </span>
               {historyHint && <small>{historyHint}</small>}
             </div>
@@ -728,8 +763,8 @@ export default function App() {
             key={mcuKey}
             source="mcu"
             historical={history}
-            preview={history ? recordLogs?.mcu ?? emptyPreview : mcu}
-            clear={() => setMcu(emptyPreview)}
+            preview={history ? recordLogs?.mcu ?? emptyPreview : live ? capturePreview?.mcu ?? emptyPreview : mcu}
+            clear={() => clearPreview("mcu")}
             visible={logLayout !== "android"}
             findRef={mcuFind}
             activate={() => { lastPane.current = "mcu"; }}
@@ -740,8 +775,8 @@ export default function App() {
             key={androidKey}
             source="android"
             historical={history}
-            preview={history ? recordLogs?.android ?? emptyPreview : android}
-            clear={() => setAndroid(emptyPreview)}
+            preview={history ? recordLogs?.android ?? emptyPreview : live ? capturePreview?.android ?? emptyPreview : android}
+            clear={() => clearPreview("android")}
             visible={logLayout !== "mcu"}
             findRef={androidFind}
             activate={() => { lastPane.current = "android"; }}
@@ -756,7 +791,7 @@ export default function App() {
               ? (savingFullLogs ? "已连接 · 全量记录中" : "已连接 · 未保存完整日志")
               : "未连接")}
           </span>
-          <span className="live-label">{history ? "历史日志" : "实时日志"}</span>
+          <span className="live-label">{fullView ? "完整日志" : history ? "历史日志" : live ? "抓取预览" : "实时日志"}</span>
           <span className="status-notice" title={notice}>
             {notice}
           </span>
@@ -818,18 +853,21 @@ export default function App() {
           aria-labelledby="operations-tab-capture"
           hidden={operationsTab !== "capture"}
         >
+          {fullView ? <section className="capture-card">
+            <div className="capture-heading"><span className="eyebrow">完整日志</span></div>
+          </section> : <>
           <section className="capture-card">
             <div className="capture-heading">
               <span className="eyebrow">
                 {live
                   ? "抓取中"
-                  : history
+                  : recordHistory
                     ? view.interrupted
                       ? "已中断"
                       : "已保存"
                     : "待开始"}
               </span>
-              {history && (
+              {recordHistory && (
                 <button
                   className="text-button"
                   onClick={() =>
@@ -852,7 +890,7 @@ export default function App() {
                 onChange={(e) => updateField("title", e.target.value)}
                 onBlur={() => flush().catch((e) => setError(String(e)))}
               />
-              {!state.capturing && history && (
+              {!state.capturing && recordHistory && (
                 <button
                   className="secondary"
                   disabled={locked}
@@ -873,7 +911,7 @@ export default function App() {
                 </button>
               )}
             </div>
-            {(history ? view.source !== "mcu" : !!currentDevices.androidSerial) && <div className="app-select">
+            {(recordHistory ? view.source !== "mcu" : !!currentDevices.androidSerial) && <div className="app-select">
               <label htmlFor="package">Android 应用</label>
               <div
                 className="package-field"
@@ -886,7 +924,7 @@ export default function App() {
                   id="package"
                   list="packages"
                   placeholder="全部应用 / 包名"
-                  value={history ? view.package : config.package}
+                  value={recordHistory ? view.package : config.package}
                   disabled={packageLocked}
                   onChange={(e) => patch({ package: e.target.value })}
                 />
@@ -964,6 +1002,7 @@ export default function App() {
               onBlur={() => flush().catch((e) => setError(String(e)))}
             />
           </section>
+          </>}
         </div>
         <div
           className="operations-body"

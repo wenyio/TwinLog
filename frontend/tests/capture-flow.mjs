@@ -103,7 +103,8 @@ try {
             Object.assign(config, next);
           },
           GetState: async () => structuredClone(state),
-          ListRecords: async () => structuredClone(records),
+          ListSessions: async () => records.length ? [{ path: "test", startedAt: records.at(-1).startedAt,
+            managed: false, records: structuredClone(records), full: null }] : [],
           ReadRecordLogs: async (path) => {
             if (window.calls.failRead) throw Error("模拟日志读取失败");
             const source = records.find((r) => r.path === path)?.source;
@@ -162,6 +163,11 @@ try {
             state.activeRecord = r;
             state.capturing = true;
             emit("state");
+            handlers.logs?.forEach((fn) => {
+              fn({ source: "mcu", text: "上条记录延迟消息\n", recordPath: "test/old" });
+              fn({ source: "mcu", text: "MCU 抓取首批\n", recordPath: r.path });
+              fn({ source: "android", text: "Android 抓取首批\n", recordPath: r.path });
+            });
             return structuredClone(r);
           },
           StopCapture: async () => {
@@ -185,7 +191,7 @@ try {
             window.calls.titleSaves.push({ path, title });
             records.find((r) => r.path === path).title = title;
           },
-          ExportRecords: async (paths) => {
+          ExportLogs: async (paths) => {
             window.calls.exported.push(structuredClone(records.filter((r) => paths.includes(r.path))));
             return "test/export.zip";
           },
@@ -322,7 +328,7 @@ try {
   assert.deepEqual(await page.evaluate(() => window.calls.titleSaves), [
     { path: "test/old", title: "更新历史标题" },
   ]);
-  assert.ok(await page.getByRole("button", { name: /更新历史标题/ }).isVisible());
+  assert.ok(await page.locator(".history-item").filter({ hasText: "更新历史标题" }).isVisible());
   await page.evaluate(() => (window.calls.failStart = true));
   await capture.getByRole("button", { name: "开始抓取", exact: true }).click();
   await page.getByText("Error: 模拟开始失败", { exact: true }).waitFor();
@@ -337,6 +343,12 @@ try {
   await title.fill("");
   await capture.getByRole("button", { name: "开始抓取", exact: true }).click();
   await capture.getByText("抓取中", { exact: true }).waitFor();
+  await page.evaluate(() => window.sendLogs());
+  for (const [index, source] of ["MCU", "Android"].entries()) {
+    const preview = page.locator(".log-pane pre").nth(index);
+    assert.match(await preview.textContent(), new RegExp(source + " 抓取首批"));
+    assert.doesNotMatch(await preview.textContent(), /保留日志|上条记录延迟消息/);
+  }
   assert.ok(await title.isEnabled());
   assert.equal(await newCapture.count(), 0);
   assert.ok(await page.getByRole("checkbox", { name: "选择 未命名", exact: true }).isDisabled());
@@ -466,7 +478,7 @@ try {
   await page.evaluate(() => (window.calls.failDeletePartially = false));
   await page.getByRole("button", { name: "删除所选", exact: true }).click();
   await page.getByText("已删除 1 条记录", { exact: true }).waitFor();
-  await page.getByText("还没有抓取记录", { exact: true }).waitFor();
+  await page.getByText("还没有日志会话", { exact: true }).waitFor();
   assert.ok(await selectAll.isDisabled());
   assert.equal(await selectAll.isChecked(), false);
 
@@ -503,7 +515,7 @@ try {
   assert.equal(await historyBanner.locator("small").textContent(), "日志未加载，可重新点击记录重试");
   await assertReturnCentered();
   await page.evaluate(() => (window.calls.failRead = false));
-  await page.getByRole("button", { name: /仅串口记录/ }).click();
+  await page.locator(".history-item").filter({ hasText: "仅串口记录" }).click();
   await page.getByText("test/new MCU 历史内容", { exact: false }).waitFor();
   await assertSinglePane("MCU 串口");
   await page.getByRole("button", { name: "返回实时", exact: true }).click();
@@ -539,7 +551,7 @@ try {
   assert.equal(await packageField.inputValue(), "");
   assert.equal(await clearPackage.count(), 0);
   assert.deepEqual(await page.evaluate(() => window.calls.packageChanges), ["com.example.app", ""]);
-  await page.getByRole("button", { name: /仅串口记录/ }).click();
+  await page.locator(".history-item").filter({ hasText: "仅串口记录" }).click();
   await assertSinglePane("MCU 串口");
   await page.keyboard.press("Control+f");
   const recordSearch = page.getByRole("textbox", { name: "搜索当前预览" });
@@ -558,6 +570,124 @@ try {
   console.log(
     "PASS: capture flow, title and notes, export and exit flush, history, deletion, single-source layout and package clearing",
   );
+
+  const historyPage = await browser.newPage({ viewport: { width: 1080, height: 640 } });
+  await historyPage.addInitScript(() => {
+    const config = { outputDir: "test", adbPath: "adb", androidSerial: "device" };
+    const record = (path, title) => ({ path, title, startedAt: "2026-11-17T02:00:00Z", endedAt: "2026-11-17T02:01:00Z", notes: "保留备注", package: "", source: "android" });
+    const full = (path) => ({ path: path + "/full", source: "android", bytes: 1048576 });
+    const sessions = [
+      { path: "test/live", startedAt: "2026-11-18T02:00:00Z", managed: true, records: [], full: full("test/live") },
+      { path: "test/old", startedAt: "2026-11-17T01:00:00Z", managed: true, records: [record("test/old/r1", "连接测试"), record("test/old/r2", "重连测试")], full: full("test/old") },
+    ];
+    window.historyCalls = [];
+    window.fullReads = [];
+    const handlers = {};
+    const state = { connected: true, capturing: false, sessionDir: "test/live", activeRecord: null, config, error: "", mcuBytes: 0, androidBytes: 0 };
+    window.emitHistoryEvent = (name, data) => handlers[name]?.forEach((fn) => fn(data));
+    window.setCapturing = (capturing) => window.emitHistoryEvent("state", { ...state, capturing });
+    window.go = { main: { App: {
+      GetConfig: async () => config,
+      GetState: async () => state,
+      ListPorts: async () => [], ListDevices: async () => [],
+      ListSessions: async () => structuredClone(sessions),
+      ReadFullLogs: async (path) => {
+        window.fullReads.push(path);
+        return { mcu: { text: "", bytes: 0 }, android: { text: "完整 Android 日志 " + path, bytes: 30 } };
+      },
+      ExportLogs: async (...args) => { window.historyCalls.push(args); return "test/history.zip"; },
+      DeleteSessionLogs: async (path, fullOnly) => {
+        window.historyCalls.push([path, fullOnly]);
+        const idx = sessions.findIndex((s) => s.path === path);
+        if (fullOnly) sessions[idx].full = null;
+        else sessions.splice(idx, 1);
+      },
+    } } };
+    window.runtime = { EventsOn: (name, fn) => {
+      (handlers[name] ??= new Set()).add(fn);
+      return () => handlers[name].delete(fn);
+    } };
+  });
+  await historyPage.goto(url);
+  const groups = historyPage.locator(".session-group");
+  await groups.nth(1).waitFor();
+  const activeSession = groups.first();
+  const oldSession = groups.nth(1);
+  const activeToggle = activeSession.locator(".session-toggle");
+  assert.equal(await activeToggle.locator(".session-count").textContent(), "0");
+  assert.ok(await activeSession.locator(".full-row .session-writing").isVisible());
+  await activeToggle.click();
+  assert.ok(await activeToggle.locator(".session-writing").isVisible());
+  assert.ok(await activeSession.locator(".full-row").isHidden());
+  await activeToggle.click();
+  await activeSession.getByRole("button", { name: /完整日志操作/ }).click();
+  const action = (name) => historyPage.locator(".row-popover").getByRole("button", { name, exact: true });
+  assert.ok(await action("删除完整日志").isDisabled());
+  assert.ok(await action("导出完整日志").isDisabled());
+  await historyPage.keyboard.press("Escape");
+  const activeFull = activeSession.locator(".full-row .history-item");
+  const oldFull = oldSession.locator(".full-row .history-item");
+  const liveLog = historyPage.locator(".log-pane pre");
+  const latest = historyPage.getByRole("button", { name: "回到最新", exact: true });
+  const backToLive = historyPage.getByRole("button", { name: "返回实时", exact: true });
+  assert.equal(await activeFull.getAttribute("title"), "返回实时预览");
+  await historyPage.evaluate(() => window.emitHistoryEvent("logs", {
+    source: "android", text: Array.from({ length: 200 }, (_, i) => "实时 Android " + i + "\n").join(""),
+  }));
+  await historyPage.getByText(/实时 Android 199/).waitFor();
+  await liveLog.evaluate((el) => { el.scrollTop = 200; });
+  await latest.waitFor();
+  const frozen = await liveLog.textContent();
+  const scrollTop = await liveLog.evaluate((el) => el.scrollTop);
+  assert.ok(scrollTop > 0);
+  await activeFull.click();
+  assert.ok(await backToLive.isHidden());
+  assert.ok(await latest.isVisible());
+  assert.equal(await liveLog.textContent(), frozen);
+  assert.equal(await liveLog.evaluate((el) => el.scrollTop), scrollTop);
+  assert.deepEqual(await historyPage.evaluate(() => window.fullReads), []);
+  await historyPage.evaluate(() => window.setCapturing(true));
+  await historyPage.waitForFunction(() => document.querySelector(".full-row .history-item")?.disabled);
+  await historyPage.evaluate(() => window.setCapturing(false));
+  await oldSession.locator(".session-toggle").click();
+  await oldSession.getByRole("checkbox", { name: "选择 重连测试" }).check();
+  await oldFull.click();
+  await historyPage.getByText(/完整 Android 日志 test\/old/).waitFor();
+  await historyPage.evaluate(() => window.emitHistoryEvent("logs", { source: "android", text: "查看历史期间收到的实时日志\n" }));
+  assert.ok(await historyPage.getByText(/查看历史期间收到的实时日志/).isHidden());
+  await activeFull.click();
+  await historyPage.getByText(/查看历史期间收到的实时日志/).waitFor();
+  assert.ok(await backToLive.isHidden());
+  assert.deepEqual(await historyPage.evaluate(() => window.fullReads), ["test/old"]);
+  await oldFull.click();
+  await historyPage.getByText(/完整 Android 日志 test\/old/).waitFor();
+  const logBounds = await historyPage.locator(".log-pane").boundingBox();
+  await oldSession.getByRole("button", { name: /完整日志操作/ }).click();
+  assert.deepEqual(await historyPage.locator(".log-pane").boundingBox(), logBounds);
+  await action("导出完整日志").click();
+  await historyPage.getByText("已导出：test/history.zip", { exact: true }).waitFor();
+  assert.deepEqual(await historyPage.evaluate(() => window.historyCalls[0]), [[], ["test/old"]]);
+  await oldSession.getByRole("button", { name: /记录操作 · 连接测试/ }).click();
+  await action("导出此记录").click();
+  await historyPage.getByText("已导出：test/history.zip", { exact: true }).waitFor();
+  assert.deepEqual(await historyPage.evaluate(() => window.historyCalls[1]), [["test/old/r1"], []]);
+  await historyPage.getByRole("checkbox", { name: "附带完整日志" }).check();
+  await historyPage.getByRole("button", { name: /导出所选/ }).click();
+  await historyPage.getByText("已导出：test/history.zip", { exact: true }).waitFor();
+  assert.deepEqual(await historyPage.evaluate(() => window.historyCalls[2]), [["test/old/r2"], ["test/old"]]);
+  await oldSession.getByRole("button", { name: /完整日志操作/ }).click();
+  await action("删除完整日志").click();
+  await historyPage.getByText("已删除完整日志", { exact: true }).waitFor();
+  assert.ok(await oldSession.locator(".full-row").isHidden());
+  assert.equal(await oldSession.locator(".session-count").textContent(), "2");
+  assert.ok(await oldSession.getByRole("checkbox", { name: "选择 重连测试" }).isChecked());
+  assert.ok(await historyPage.getByRole("checkbox", { name: "附带完整日志" }).isDisabled());
+  await oldSession.getByRole("button", { name: /会话操作/ }).click();
+  await action("删除会话").click();
+  await historyPage.getByText("已删除会话", { exact: true }).waitFor();
+  assert.equal(await groups.count(), 1);
+  assert.deepEqual(await historyPage.evaluate(() => window.historyCalls.slice(3)), [["test/old", true], ["test/old", false]]);
+  console.log("PASS: session tree, live shortcut and scroll preservation, historical full preview, floating menus, export and deletion scope");
 } finally {
   await browser?.close();
   server.kill();

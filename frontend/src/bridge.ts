@@ -38,6 +38,18 @@ export interface State {
   mcuBytes: number;
   androidBytes: number;
 }
+export interface FullLog {
+  path: string;
+  source?: LogSource;
+  bytes: number;
+}
+export interface Session {
+  path: string;
+  startedAt: string;
+  managed: boolean;
+  records: RecordItem[];
+  full: FullLog | null;
+}
 export interface LogPreview {
   text: string;
   bytes: number;
@@ -88,10 +100,12 @@ type Backend = {
   StopCapture(): Promise<RecordItem>;
   SaveNotes(path: string, notes: string): Promise<void>;
   SaveTitle(path: string, title: string): Promise<void>;
-  ListRecords(root: string): Promise<RecordItem[]>;
+  ListSessions(root: string): Promise<Session[]>;
   ReadRecordLogs(path: string): Promise<RecordLogs>;
+  ReadFullLogs(session: string): Promise<RecordLogs>;
   DeleteRecords(paths: string[]): Promise<void>;
-  ExportRecords(paths: string[], full: boolean): Promise<string>;
+  DeleteSessionLogs(path: string, fullOnly: boolean): Promise<void>;
+  ExportLogs(paths: string[], fullSessions: string[]): Promise<string>;
   OpenFolder(path: string): Promise<void>;
 };
 declare global {

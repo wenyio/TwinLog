@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 )
 
@@ -86,6 +87,41 @@ func TestExportNamesUseCurrentTitlesWithoutMovingRecords(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(paths[i], "mcu.log")); err != nil {
 			t.Fatal("source directory changed:", err)
 		}
+	}
+}
+
+func TestExportFilename(t *testing.T) {
+	root := t.TempDir()
+	path := historyRecord(t, root, "initial")
+	m := NewManager(nil)
+	now := time.Date(2026, 11, 18, 10, 11, 12, 0, time.UTC)
+	const fallback = "TwinLog_20261118_101112.zip"
+	cases := []struct{ title, want string }{
+		{"  最新标题  ", "最新标题.zip"},
+		{"Log/Android:MCU?", "Log_Android_MCU_.zip"},
+		{"Result.ZIP", "Result.zip"},
+		{strings.Repeat("a", 71), strings.Repeat("a", 70) + ".zip"},
+		{"  ", fallback},
+		{"...", fallback},
+	}
+	if !filepath.IsLocal("CON") {
+		cases = append(cases, struct{ title, want string }{"CON.txt", "_CON.txt.zip"})
+	}
+	for _, tc := range cases {
+		if err := m.SaveTitle(path, tc.title); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := ExportFilename([]string{path}, now); err != nil || got != tc.want {
+			t.Errorf("title %q: got %q, %v; want %q", tc.title, got, err, tc.want)
+		}
+	}
+	for _, paths := range [][]string{nil, {path, filepath.Join(root, "another")}} {
+		if got, err := ExportFilename(paths, now); err != nil || got != fallback {
+			t.Errorf("paths %v: got %q, %v; want %q", paths, got, err, fallback)
+		}
+	}
+	if _, err := ExportFilename([]string{filepath.Join(root, "missing")}, now); !os.IsNotExist(err) {
+		t.Fatalf("missing record: got %v", err)
 	}
 }
 

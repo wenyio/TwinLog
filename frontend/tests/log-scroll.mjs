@@ -26,7 +26,7 @@ try {
         GetConfig: async () => config,
         SaveConfig: async (next) => { Object.assign(config, next); window.savedPreviewLines = next.previewLines; },
         GetState: async () => ({ connected: false, capturing: false, sessionDir: "", activeRecord: null, config, error: "", mcuBytes: 0, androidBytes: 0 }),
-        ListRecords: async () => [], ListPorts: async () => [], ListDevices: async () => [],
+        ListSessions: async () => [], ListPorts: async () => [], ListDevices: async () => [],
       } } };
       window.runtime = { EventsOn: (name, fn) => {
         (handlers[name] ??= new Set()).add(fn);

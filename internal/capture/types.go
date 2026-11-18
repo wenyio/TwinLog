@@ -71,6 +71,7 @@ type Device struct {
 	Model  string `json:"model"`
 }
 type LogBatch struct {
-	Source string `json:"source"`
-	Text   string `json:"text"`
+	Source     string `json:"source"`
+	Text       string `json:"text"`
+	RecordPath string `json:"recordPath,omitempty"`
 }

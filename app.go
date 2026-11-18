@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 	"twinlog/internal/capture"
@@ -161,12 +162,36 @@ func (a *App) SetPackage(pkg string) error {
 func (a *App) StartCapture(title, notes string) (capture.Record, error) {
 	return a.manager.StartCapture(title, notes)
 }
-func (a *App) StopCapture() (capture.Record, error)              { return a.manager.StopCapture() }
-func (a *App) SaveNotes(path, notes string) error                { return a.manager.SaveNotes(path, notes) }
-func (a *App) SaveTitle(path, title string) error                { return a.manager.SaveTitle(path, title) }
-func (a *App) ListRecords(root string) ([]capture.Record, error) { return a.manager.ListRecords(root) }
+func (a *App) StopCapture() (capture.Record, error) { return a.manager.StopCapture() }
+func (a *App) SaveNotes(path, notes string) error   { return a.manager.SaveNotes(path, notes) }
+func (a *App) SaveTitle(path, title string) error   { return a.manager.SaveTitle(path, title) }
+func (a *App) ListSessions(root string) ([]capture.Session, error) {
+	return a.manager.ListSessions(root)
+}
 func (a *App) ReadRecordLogs(path string) (capture.RecordLogs, error) {
 	return a.manager.ReadRecordLogs(path, a.GetConfig().PreviewLines)
+}
+func (a *App) ReadFullLogs(session string) (capture.RecordLogs, error) {
+	c := a.GetConfig()
+	return a.manager.ReadFullLogs(c.OutputDir, session, c.PreviewLines)
+}
+func (a *App) DeleteSessionLogs(path string, fullOnly bool) error {
+	return a.manager.RemoveSessionLogs(a.GetConfig().OutputDir, path, fullOnly, func(s capture.Session) (bool, error) {
+		title := "删除会话"
+		message := fmt.Sprintf("确定删除会话 %s？\n整个会话目录将移入回收站，包括 %d 条记录及备注、会话信息和目录内其他文件。", filepath.Base(s.Path), len(s.Records))
+		if s.Full != nil {
+			message += "\n完整日志也将一并删除。"
+		}
+		if fullOnly {
+			title = "删除完整日志"
+			message = fmt.Sprintf("确定删除会话 %s 的完整日志？\n仅将 full 目录移入回收站，保留会话、记录和备注。", filepath.Base(s.Path))
+		}
+		answer, err := wruntime.MessageDialog(a.ctx, wruntime.MessageDialogOptions{
+			Type: wruntime.QuestionDialog, Title: title, Message: message,
+			Buttons: []string{"Yes", "No"}, DefaultButton: "No", CancelButton: "No",
+		})
+		return answer == "Yes", err
+	})
 }
 func (a *App) DeleteRecords(paths []string) error {
 	root := a.GetConfig().OutputDir
@@ -182,8 +207,8 @@ func confirmRecordDeletion(count int, ask func(wruntime.MessageDialogOptions) (s
 		return fmt.Errorf("请选择需要删除的记录")
 	}
 	answer, err := ask(wruntime.MessageDialogOptions{
-		Type: wruntime.QuestionDialog, Title: "删除抓取记录",
-		Message: fmt.Sprintf("确定删除选中的 %d 条抓取记录？\n记录日志和备注会一并删除，通常可从 Windows 回收站还原。完整日志 full 保留。", count),
+		Type: wruntime.QuestionDialog, Title: "删除记录",
+		Message: fmt.Sprintf("确定删除选中的 %d 条记录？\n记录日志和备注会一并删除，通常可从 Windows 回收站还原。完整日志和会话目录保留。", count),
 		Buttons: []string{"Yes", "No"}, DefaultButton: "No", CancelButton: "No",
 	})
 	if err != nil || answer != "Yes" {
@@ -191,15 +216,19 @@ func confirmRecordDeletion(count int, ask func(wruntime.MessageDialogOptions) (s
 	}
 	return remove()
 }
-func (a *App) ExportRecords(paths []string, includeFull bool) (string, error) {
-	path, e := wruntime.SaveFileDialog(a.ctx, wruntime.SaveDialogOptions{Title: "导出抓取记录", DefaultFilename: "TwinLog_" + time.Now().Format("20060102_150405") + ".zip", Filters: []wruntime.FileFilter{{DisplayName: "ZIP 压缩包", Pattern: "*.zip"}}})
+func (a *App) ExportLogs(paths, fullSessions []string) (string, error) {
+	name, e := capture.ExportFilename(paths, time.Now())
+	if e != nil {
+		return "", e
+	}
+	path, e := wruntime.SaveFileDialog(a.ctx, wruntime.SaveDialogOptions{Title: "导出日志", DefaultFilename: name, Filters: []wruntime.FileFilter{{DisplayName: "ZIP 压缩包", Pattern: "*.zip"}}})
 	if e != nil || path == "" {
 		return "", e
 	}
-	if filepath.Ext(path) != ".zip" {
+	if !strings.EqualFold(filepath.Ext(path), ".zip") {
 		path += ".zip"
 	}
-	if e = a.manager.Export(paths, path, includeFull); e != nil {
+	if e = a.manager.ExportSelection(a.GetConfig().OutputDir, paths, fullSessions, path); e != nil {
 		return "", e
 	}
 	return path, nil

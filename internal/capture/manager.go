@@ -79,26 +79,27 @@ func (l *logFile) close() error {
 }
 
 type Manager struct {
-	op                               sync.Mutex
-	mu                               sync.Mutex
-	emit                             func(string, any)
-	connected                        bool
-	config                           Config
-	sessionDir                       string
-	lastError                        string
-	trackerError                     string
-	record                           *Record
-	mcu, android, capMCU, capAndroid *logFile
-	port                             serial.Port
-	cmd                              *exec.Cmd
-	cancel                           context.CancelFunc
-	wg                               sync.WaitGroup
-	stamp                            TimestampStream
-	capFirst                         bool
-	capPrefix                        string
-	filter                           AndroidFilter
-	previewMCU, previewAndroid       []byte
-	mcuBytes, androidBytes           uint64
+	op                                       sync.Mutex
+	mu                                       sync.Mutex
+	emit                                     func(string, any)
+	connected                                bool
+	config                                   Config
+	sessionDir                               string
+	lastError                                string
+	trackerError                             string
+	record                                   *Record
+	mcu, android, capMCU, capAndroid         *logFile
+	port                                     serial.Port
+	cmd                                      *exec.Cmd
+	cancel                                   context.CancelFunc
+	wg                                       sync.WaitGroup
+	stamp                                    TimestampStream
+	capFirst                                 bool
+	capPrefix                                string
+	filter                                   AndroidFilter
+	previewMCU, previewAndroid               []byte
+	capturePreviewMCU, capturePreviewAndroid []byte
+	mcuBytes, androidBytes                   uint64
 }
 
 func NewManager(emit func(string, any)) *Manager { return &Manager{emit: emit} }
@@ -432,6 +433,9 @@ func (m *Manager) ingestLocked(source string, data []byte, at time.Time) error {
 		if e := m.capMCU.write(cp); e != nil {
 			return e
 		}
+		if m.capMCU != nil {
+			m.capturePreviewMCU = appendPreview(m.capturePreviewMCU, cp)
+		}
 		m.previewMCU = appendPreview(m.previewMCU, p)
 		return nil
 	}
@@ -442,6 +446,9 @@ func (m *Manager) ingestLocked(source string, data []byte, at time.Time) error {
 	p := m.filter.Feed(data)
 	if e := m.capAndroid.write(p); e != nil {
 		return e
+	}
+	if m.capAndroid != nil {
+		m.capturePreviewAndroid = appendPreview(m.capturePreviewAndroid, p)
 	}
 	m.previewAndroid = appendPreview(m.previewAndroid, p)
 	return nil
@@ -459,6 +466,25 @@ func validPreview(p []byte) (string, []byte) {
 	}
 	return strings.ToValidUTF8(string(p[:n]), "�"), append([]byte(nil), p[n:]...)
 }
+
+// Drain under the write lock so a delayed event still identifies its record.
+func (m *Manager) drainPreviewsLocked() [4]LogBatch {
+	drain := func(source, path string, buf *[]byte) LogBatch {
+		text, tail := validPreview(*buf)
+		*buf = tail
+		return LogBatch{Source: source, Text: text, RecordPath: path}
+	}
+	batches := [4]LogBatch{
+		drain("mcu", "", &m.previewMCU),
+		drain("android", "", &m.previewAndroid),
+	}
+	if m.record != nil {
+		batches[2] = drain("mcu", m.record.Path, &m.capturePreviewMCU)
+		batches[3] = drain("android", m.record.Path, &m.capturePreviewAndroid)
+	}
+	return batches
+}
+
 func (m *Manager) pulse(ctx context.Context) {
 	t := time.NewTicker(120 * time.Millisecond)
 	defer t.Stop()
@@ -469,10 +495,7 @@ func (m *Manager) pulse(ctx context.Context) {
 			return
 		case <-t.C:
 			m.mu.Lock()
-			a, tailA := validPreview(m.previewMCU)
-			b, tailB := validPreview(m.previewAndroid)
-			m.previewMCU = tailA
-			m.previewAndroid = tailB
+			batches := m.drainPreviewsLocked()
 			var e error
 			if time.Since(last) >= time.Second {
 				e = errors.Join(m.mcu.flush(), m.android.flush(), m.capMCU.flush(), m.capAndroid.flush())
@@ -480,11 +503,10 @@ func (m *Manager) pulse(ctx context.Context) {
 			}
 			m.mu.Unlock()
 			if m.emit != nil {
-				if a != "" {
-					m.emit("logs", LogBatch{"mcu", a})
-				}
-				if b != "" {
-					m.emit("logs", LogBatch{"android", b})
+				for _, batch := range batches {
+					if batch.Text != "" {
+						m.emit("logs", batch)
+					}
 				}
 			}
 			m.notify()
@@ -642,6 +664,8 @@ func (m *Manager) finishLocked(interrupted bool) error {
 	e := errors.Join(m.capMCU.close(), m.capAndroid.close())
 	m.capMCU = nil
 	m.capAndroid = nil
+	m.capturePreviewMCU = nil
+	m.capturePreviewAndroid = nil
 	if e != nil {
 		m.record.Interrupted = true
 	}
