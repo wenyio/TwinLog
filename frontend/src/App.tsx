@@ -602,19 +602,6 @@ export default function App() {
             <RefreshCw size={16} />
           </button>
         </div>
-        <div className="selection-toolbar">
-          <label>
-            <input
-              ref={selectAll}
-              type="checkbox"
-              aria-label="全选记录"
-              checked={allSelected}
-              disabled={!selectable.length || locked}
-              onChange={() => setSelected(allSelected ? new Set() : new Set(selectable.map((r) => r.path)))}
-            />
-            全选{selectedCount ? " · " + selectedCount : ""}
-          </label>
-        </div>
         <SessionList sessions={sessions} selected={selected} viewPath={viewPath} state={state} locked={locked}
           onSelect={(path, checked) => setSelected((s) => {
             const next = new Set(s);
@@ -628,15 +615,27 @@ export default function App() {
           onRename={setSessionDialog}
           onOpenFolder={(path) => run("打开目录", () => api.OpenFolder(path))} />
         <div className="export-panel">
-          <label title={!attachable.length ? "所选记录没有可导出的完整日志" : ""}>
-            <input
-              type="checkbox"
-              checked={attaching}
-              disabled={!attachable.length || locked}
-              onChange={(e) => setIncludeFull(e.target.checked)}
-            />
-            附带完整日志
-          </label>
+          <div className="batch-options">
+            <label>
+              <input
+                ref={selectAll}
+                type="checkbox"
+                checked={allSelected}
+                disabled={!selectable.length || locked}
+                onChange={() => setSelected(allSelected ? new Set() : new Set(selectable.map((r) => r.path)))}
+              />
+              全选记录
+            </label>
+            <label title={!attachable.length ? "所选记录没有可导出的完整日志" : ""}>
+              <input
+                type="checkbox"
+                checked={attaching}
+                disabled={!attachable.length || locked}
+                onChange={(e) => setIncludeFull(e.target.checked)}
+              />
+              附带完整日志
+            </label>
+          </div>
           {!!omitted && <small>{omitted} 个会话的完整日志不可用，不会附带</small>}
           <div className="batch-actions">
           <button
