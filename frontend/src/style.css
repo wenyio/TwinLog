@@ -357,7 +357,7 @@ label {
 .new-capture-bar > button { flex: 1; }
 .new-capture-bar small { color: var(--text-secondary); }
 .saved-record-title { display: flex; align-items: flex-start; gap: 6px; min-width: 0; }
-.saved-record-title strong { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 14px; line-height: 22px; }
+.saved-record-title strong { flex: 1; min-width: 0; font-size: 14px; line-height: 22px; }
 .saved-record-title button { flex: none; font-size: 11px; padding: 2px; }
 .row-popover {
   position: fixed;
@@ -421,12 +421,15 @@ label {
   display: block;
   flex: 1;
   min-width: 0;
+  font-weight: 500;
+}
+.record-row strong,
+.saved-record-title strong {
   overflow: hidden;
   text-overflow: clip;
   -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent);
   mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent);
   white-space: nowrap;
-  font-weight: 500;
 }
 .export-panel {
   flex-shrink: 0;
