@@ -356,9 +356,9 @@ label {
 .new-capture-bar { display: flex; align-items: center; gap: 8px; }
 .new-capture-bar > button { flex: 1; }
 .new-capture-bar small { color: var(--text-secondary); }
-.saved-record-title { display: flex; align-items: flex-start; gap: 6px; min-width: 0; }
+.saved-record-title { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .saved-record-title strong { flex: 1; min-width: 0; font-size: 14px; line-height: 22px; }
-.saved-record-title button { flex: none; font-size: 11px; padding: 2px; }
+.saved-record-title button { flex: none; width: 24px; height: 24px; padding: 0; }
 .row-popover {
   position: fixed;
   z-index: 30;

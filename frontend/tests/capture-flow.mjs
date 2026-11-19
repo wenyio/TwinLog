@@ -293,6 +293,11 @@ try {
   await page.locator(".history-row button").first().click();
   assert.equal(await title.count(), 0, 'history has no editable capture-title field');
   assert.equal(await savedTitle().textContent(), "旧记录");
+  await savedTitle().dblclick();
+  const titleEditDialog = page.getByRole("dialog", { name: "重命名记录", exact: true });
+  await titleEditDialog.waitFor();
+  assert.equal(await titleEditDialog.getByRole("textbox", { name: "记录标题", exact: true }).inputValue(), "旧记录");
+  await titleEditDialog.getByRole("button", { name: "取消", exact: true }).click();
   await page.getByText("test/old MCU 历史内容", { exact: false }).waitFor();
   assert.ok(await page.getByText("test/old Android 历史内容", { exact: false }).isVisible());
   const historyBanner = page.locator(".history-banner");
