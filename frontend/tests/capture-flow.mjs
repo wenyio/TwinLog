@@ -76,6 +76,7 @@ try {
     const handlers = {};
     const emit = (name) =>
       handlers[name]?.forEach((fn) => fn(structuredClone(state)));
+    window.foregroundState = (next) => { Object.assign(state, next); emit("state"); };
     window.calls = {
       start: 0,
       stop: 0,
@@ -132,6 +133,12 @@ try {
           ListPorts: async () => [{ name: "COM1", description: "" }],
           ListDevices: async () => [{ serial: "test", state: "device", model: "Test Android" }],
           ListPackages: async () => ["com.example.app"],
+          ForegroundPackage: async (adb, serial) => {
+            window.calls.foregroundDevice = { adb, serial };
+            if (window.holdForeground) await window.holdForeground;
+            if (window.calls.failForeground) throw Error("模拟前台查询失败");
+            return "com.example.foreground";
+          },
           Connect: async (next, session) => {
             if (window.calls.failConnect) throw Error("模拟连接失败");
             window.calls.connectConfigs.push(structuredClone(next));
@@ -146,6 +153,7 @@ try {
             emit("state");
           },
           SetPackage: async (pkg) => {
+            if (window.calls.failPackage) throw Error("模拟切换应用失败");
             window.calls.packageChanges.push(pkg);
             state.config = { ...state.config, package: pkg };
             emit("state");
@@ -571,6 +579,50 @@ try {
   assert.equal(await packageField.inputValue(), "");
   assert.equal(await clearPackage.count(), 0);
   assert.deepEqual(await page.evaluate(() => window.calls.packageChanges), ["com.example.app", ""]);
+  const foreground = capture.getByRole("button", { name: "获取前台应用", exact: true });
+  await foreground.click();
+  await page.waitForFunction(() => window.calls.packageChanges.at(-1) === "com.example.foreground");
+  assert.equal(await packageField.inputValue(), "com.example.foreground");
+  assert.deepEqual(await page.evaluate(() => window.calls.foregroundDevice), { adb: "adb", serial: "test" });
+  const appSelector = capture.locator(".app-select");
+  assert.ok(await packageField.evaluate((el) => el.clientWidth > 100), "package field remains usable beside both icons");
+  assert.ok(await appSelector.evaluate((el) => el.scrollWidth <= el.clientWidth), "selector has no horizontal overflow");
+  await appSelector.screenshot({ path: "test-results/foreground-selection.png" });
+  await packageField.fill("com.example.draft");
+  await page.evaluate(() => (window.calls.failForeground = true));
+  const changesBeforeFailure = await page.evaluate(() => window.calls.packageChanges.length);
+  await foreground.click();
+  await page.getByText("Error: 模拟前台查询失败", { exact: true }).waitFor();
+  assert.equal(await packageField.inputValue(), "com.example.draft", "failed query preserves even an unapplied draft");
+  assert.equal(await page.evaluate(() => window.calls.packageChanges.length), changesBeforeFailure);
+  await page.evaluate(() => (window.calls.failForeground = false));
+  await foreground.click();
+  await page.getByText("已选择前台应用：com.example.foreground", { exact: true }).waitFor();
+  assert.equal(await packageField.inputValue(), "com.example.foreground", "same active package restores draft without switching");
+  await clearPackage.click();
+  await page.waitForFunction(() => window.calls.packageChanges.at(-1) === "");
+  await page.evaluate(() => (window.calls.failPackage = true));
+  await foreground.click();
+  await page.getByText("Error: 模拟切换应用失败", { exact: true }).waitFor();
+  assert.equal(await packageField.inputValue(), "", "failed filter change preserves selection");
+  await page.evaluate(() => {
+    window.calls.failPackage = false;
+    window.holdForeground = new Promise((resolve) => (window.releaseForeground = resolve));
+  });
+  await foreground.click();
+  assert.ok(await foreground.isDisabled());
+  await page.evaluate(() => { window.foregroundState({ connected: false }); window.releaseForeground(); });
+  await page.getByText("Error: 设备或连接状态已变化，请重新获取前台应用", { exact: true }).waitFor();
+  assert.equal(await packageField.inputValue(), "");
+  await foreground.click();
+  await page.getByText("已选择前台应用：com.example.foreground", { exact: true }).waitFor();
+  assert.equal(await packageField.inputValue(), "com.example.foreground");
+  assert.equal(await page.evaluate(() => window.calls.configSaves.at(-1).package), "com.example.foreground");
+  await page.evaluate(() => window.foregroundState({ connected: true, capturing: true }));
+  await page.waitForFunction(() => document.querySelector('[aria-label="获取前台应用"]').disabled);
+  await page.evaluate(() => window.foregroundState({ capturing: false }));
+  await clearPackage.click();
+  await page.waitForFunction(() => window.calls.packageChanges.at(-1) === "");
   await page.locator(".history-item").filter({ hasText: "仅串口记录" }).click();
   await assertSinglePane("MCU 串口");
   await page.keyboard.press("Control+f");
@@ -588,7 +640,7 @@ try {
   assert.equal(await pane.count(), 2);
   assert.equal(await layouts.getByRole("button", { name: "上下", exact: true }).getAttribute("aria-pressed"), "true");
   console.log(
-    "PASS: capture flow, title and notes, export and exit flush, history, deletion, single-source layout and package clearing",
+    "PASS: capture flow, title and notes, export and exit flush, history, deletion, single-source layout, package clearing and foreground selection/failure/stale result/locking",
   );
 
   const historyPage = await browser.newPage({ viewport: { width: 1080, height: 640 } });

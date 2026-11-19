@@ -10,6 +10,7 @@ import {
   Usb,
   FolderOpen,
   RefreshCw,
+  Crosshair,
   Play,
   Pencil,
   Square,
@@ -280,7 +281,10 @@ export default function App() {
         });
     });
     const off1 = window.runtime?.EventsOn("state", (s: State) => {
-        if (alive) setState(s);
+        if (alive) {
+          stateRef.current = s;
+          setState(s);
+        }
       }),
       off2 = window.runtime?.EventsOn(
         "logs",
@@ -547,6 +551,8 @@ export default function App() {
     recordHistory = !!view && !live,
     history = recordHistory || !!fullView;
   const packageLocked = state.capturing || history || locked;
+  const foregroundContext = useRef({ config, state, history });
+  foregroundContext.current = { config, state, history };
   const baudRates = [...baudRatePresets, ...(config.customBaudRates ?? [])].sort((a, b) => a - b);
   const applyPackage = (pkg: string) => {
     if (!packageLocked && state.connected && pkg !== state.config.package) {
@@ -556,6 +562,34 @@ export default function App() {
         setAndroidPreviewKey((key) => key + 1);
       });
     }
+  };
+  const getForegroundPackage = () => {
+    if (packageLocked) return;
+    const before = foregroundContext.current;
+    const device = before.state.connected ? before.state.config : before.config;
+    if (!device.androidSerial) return;
+    return run("获取前台应用", async () => {
+      const pkg = await api.ForegroundPackage(device.adbPath, device.androidSerial);
+      const current = { ...foregroundContext.current, state: stateRef.current };
+      const currentDevice = current.state.connected ? current.state.config : current.config;
+      if (current.state.capturing || current.history ||
+        current.state.connected !== before.state.connected ||
+        current.state.sessionDir !== before.state.sessionDir ||
+        currentDevice.androidSerial !== device.androidSerial ||
+        currentDevice.adbPath !== device.adbPath) {
+        throw new Error("设备或连接状态已变化，请重新获取前台应用");
+      }
+      if (!pkg) throw new Error("未获取到前台应用，请在设备上打开目标应用后重试");
+      if (current.state.connected && pkg !== current.state.config.package) {
+        await api.SetPackage(pkg);
+        setAndroid(emptyPreview);
+        setAndroidPreviewKey((key) => key + 1);
+      } else if (!current.state.connected) {
+        await api.SaveConfig({ ...current.config, package: pkg });
+      }
+      patch({ package: pkg });
+      setNotice(`已选择前台应用：${pkg}`);
+    });
   };
   const activeTitle = displayTitle(live ? view?.title : state.activeRecord?.title);
   const historyHint = !recordLogs
@@ -1004,7 +1038,8 @@ export default function App() {
               <div
                 className="package-field"
                 onBlur={(e) => {
-                  if (!e.currentTarget.contains(e.relatedTarget)) applyPackage(config.package);
+                  if (!e.currentTarget.contains(e.relatedTarget) &&
+                    !(e.relatedTarget instanceof HTMLElement && e.relatedTarget.dataset.foreground)) applyPackage(config.package);
                 }}
               >
                 <input
@@ -1037,6 +1072,20 @@ export default function App() {
                   <option key={p} value={p} />
                 ))}
               </datalist>
+              <button
+                type="button"
+                className="text-button"
+                title="获取前台应用"
+                aria-label="获取前台应用"
+                data-foreground="true"
+                aria-busy={busy === "获取前台应用"}
+                disabled={!currentDevices.androidSerial || packageLocked}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={getForegroundPackage}
+              >
+                <Crosshair size={14} />
+                获取前台应用
+              </button>
               <button
                 className="text-button"
                 title="加载应用"

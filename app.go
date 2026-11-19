@@ -138,6 +138,9 @@ func (a *App) ListDevices(adb string) ([]capture.Device, error) { return capture
 func (a *App) ListPackages(adb, serial string) ([]string, error) {
 	return capture.ListPackages(adb, serial)
 }
+func (a *App) ForegroundPackage(adb, serial string) (string, error) {
+	return capture.ForegroundPackage(adb, serial)
+}
 func (a *App) SelectDirectory() (string, error) {
 	return wruntime.OpenDirectoryDialog(a.ctx, wruntime.OpenDialogOptions{Title: "选择日志保存目录"})
 }

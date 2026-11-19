@@ -95,6 +95,7 @@ type Backend = {
   ListPorts(): Promise<Port[]>;
   ListDevices(adb: string): Promise<Device[]>;
   ListPackages(adb: string, serial: string): Promise<string[]>;
+  ForegroundPackage(adb: string, serial: string): Promise<string>;
   SelectDirectory(): Promise<string>;
   SelectADB(): Promise<string>;
   Connect(c: Config): Promise<void>;
