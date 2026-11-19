@@ -49,6 +49,7 @@ type Record struct {
 	Source      string `json:"source,omitempty"` // Empty for dual-source and legacy records.
 	Interrupted bool   `json:"interrupted"`
 	FilterGaps  bool   `json:"filterGaps,omitempty"`
+	Archived    bool   `json:"archived,omitempty"`
 }
 type State struct {
 	Connected     bool    `json:"connected"`

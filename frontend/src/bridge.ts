@@ -26,6 +26,7 @@ export interface RecordItem {
   source?: LogSource;
   interrupted: boolean;
   filterGaps?: boolean;
+  archived?: boolean;
 }
 export interface State {
   connected: boolean;
@@ -48,6 +49,7 @@ export interface Session {
   path: string;
   startedAt: string;
   title?: string;
+  archived?: boolean;
   managed: boolean;
   records: RecordItem[];
   full: FullLog | null;
@@ -104,6 +106,8 @@ type Backend = {
   SaveTitle(path: string, title: string): Promise<void>;
   ListSessions(root: string): Promise<Session[]>;
   SaveSessionTitle(path: string, title: string): Promise<void>;
+  SetSessionArchived(path: string, archived: boolean): Promise<void>;
+  SetRecordArchived(path: string, archived: boolean): Promise<void>;
   ReadRecordLogs(path: string): Promise<RecordLogs>;
   ReadFullLogs(session: string): Promise<RecordLogs>;
   DeleteRecords(paths: string[]): Promise<void>;

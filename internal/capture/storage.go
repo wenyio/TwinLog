@@ -50,7 +50,66 @@ func writeRecord(path string, record Record) error {
 		Source      string `json:"source,omitempty"`
 		Interrupted bool   `json:"interrupted"`
 		FilterGaps  bool   `json:"filterGaps,omitempty"`
-	}{record.Title, record.StartedAt, record.EndedAt, record.Package, record.Source, record.Interrupted, record.FilterGaps})
+		Archived    bool   `json:"archived,omitempty"`
+	}{record.Title, record.StartedAt, record.EndedAt, record.Package, record.Source, record.Interrupted, record.FilterGaps, record.Archived})
+}
+
+func (m *Manager) SetRecordArchived(root, path string, archived bool) error {
+	m.op.Lock()
+	defer m.op.Unlock()
+	r, err := filepath.Abs(root)
+	if err != nil || root == "" {
+		return fmt.Errorf("未指定日志保存目录")
+	}
+	p, err := filepath.Abs(path)
+	if err != nil || path == "" {
+		return fmt.Errorf("未指定抓取记录")
+	}
+	rel, err := filepath.Rel(r, p)
+	parts := strings.Split(rel, string(os.PathSeparator))
+	if err != nil || len(parts) != 2 || parts[0] == ".." ||
+		strings.EqualFold(parts[0], ".twinlog-trash") || strings.EqualFold(parts[0], "full") || strings.EqualFold(parts[1], "full") {
+		return fmt.Errorf("记录不在当前保存目录内: %s", path)
+	}
+	r, err = filepath.EvalSymlinks(r)
+	if err != nil {
+		return err
+	}
+	p = filepath.Join(r, rel)
+	if err = directDir(filepath.Dir(p)); err != nil {
+		return err
+	}
+	if err = directDir(p); err != nil {
+		return err
+	}
+	metaPath := filepath.Join(p, "record.json")
+	if st, e := os.Lstat(metaPath); e != nil || !st.Mode().IsRegular() {
+		return fmt.Errorf("记录信息无效: %s", path)
+	}
+	state := m.State()
+	if state.ActiveRecord != nil && sameResolvedPath(state.ActiveRecord.Path, p) {
+		return fmt.Errorf("请先停止当前抓取再归档")
+	}
+	// Serialize with title/notes writes so archiving never overwrites a rename.
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b, err := os.ReadFile(metaPath)
+	if err != nil {
+		return err
+	}
+	var meta map[string]any
+	if err = json.Unmarshal(b, &meta); err != nil {
+		return err
+	}
+	if meta == nil {
+		return fmt.Errorf("记录信息无效: %s", path)
+	}
+	if archived {
+		meta["archived"] = true
+	} else {
+		delete(meta, "archived")
+	}
+	return writeJSON(metaPath, meta)
 }
 func safeName(s string) string {
 	s = strings.Map(func(r rune) rune {

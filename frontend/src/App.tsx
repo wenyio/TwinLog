@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import LogSplit from "./LogSplit";
 import LogPane, { emptyPreview, trimPreview } from "./LogPane";
 import SessionList, { recordTitle as displayTitle } from "./SessionList";
@@ -98,6 +98,10 @@ export default function App() {
     [notes, setNotes] = useState(""),
     [advanced, setAdvanced] = useState(false);
   const [sessionDialog, setSessionDialog] = useState<Session | null>(null);
+  const [recordDialog, setRecordDialog] = useState<RecordItem | null>(null);
+  const [archivedView, setArchivedView] = useState(false);
+  const [batchMode, setBatchMode] = useState(false);
+  const [archiveUndo, setArchiveUndo] = useState<({ session: Session; record?: never } | { record: RecordItem; session?: never }) & { archived: boolean } | null>(null);
   const [baudRateDialog, setBaudRateDialog] = useState(false);
   const [configLoaded, setConfigLoaded] = useState(false);
   const [busy, setBusy] = useState(""),
@@ -111,7 +115,6 @@ export default function App() {
     [androidPreviewKey, setAndroidPreviewKey] = useState(0),
     [searchPane, setSearchPane] = useState<string | null>(null),
     [saveStatus, setSaveStatus] = useState<"saved" | "pending" | "failed">("saved");
-  const records = useMemo(() => sessions.flatMap((s) => s.records), [sessions]);
   const lastPane = useRef<LogSource>("mcu");
   const mcuFind = useRef<HTMLButtonElement>(null);
   const androidFind = useRef<HTMLButtonElement>(null);
@@ -352,8 +355,8 @@ export default function App() {
       await flush();
       resetView();
       setLayout((v) => ({ ...v, right: true }));
-      setOperationsTab(stateRef.current.connected ? "capture" : "connection");
-      focusTitle.current = stateRef.current.connected;
+      setOperationsTab("capture");
+      focusTitle.current = true;
     });
   const openFull = (session: Session) => {
     const current = stateRef.current;
@@ -372,6 +375,9 @@ export default function App() {
         const c = { ...config, outputDir: p };
         await api.SaveConfig(c);
         setConfig(c);
+        setArchiveUndo(null);
+        setArchivedView(false);
+        setBatchMode(false);
         setFallback(null);
         resetView();
         setSelected(new Set());
@@ -410,6 +416,8 @@ export default function App() {
         throw e;
       }
       setConfig(next);
+      setArchivedView(false);
+      setSelected(new Set());
       setState(await api.GetState());
       resetView();
       setOperationsTab("capture");
@@ -420,6 +428,35 @@ export default function App() {
     run("重命名连接", async () => {
       await api.SaveSessionTitle(session.path, title);
       await refreshRecords();
+    });
+  const renameRecord = async (record: RecordItem, nextTitle: string) => {
+    await flush();
+    await api.SaveTitle(record.path, nextTitle);
+    if (viewRef.current?.path === record.path) {
+      viewRef.current = { ...viewRef.current, title: nextTitle };
+      setView(viewRef.current);
+      setTitle(nextTitle);
+    }
+    await refreshRecords();
+    setRecordDialog(null);
+  };
+  const archiveSession = (session: Session, archived: boolean, undo = false) =>
+    run(archived ? "归档连接" : "取消归档", async () => {
+      await flush();
+      await api.SetSessionArchived(session.path, archived);
+      setSessions((items) => items.map((s) => s.path === session.path ? { ...s, archived } : s));
+      setSelected((items) => new Set([...items].filter((path) => !session.records.some((r) => r.path === path))));
+      setArchiveUndo(undo ? null : { session, archived: !archived });
+      setNotice(archived ? "已归档连接" : "已取消归档");
+    });
+  const archiveRecord = (record: RecordItem, archived: boolean, undo = false) =>
+    run(archived ? "归档记录" : "取消归档", async () => {
+      await flush();
+      await api.SetRecordArchived(record.path, archived);
+      setSessions((items) => items.map((s) => ({ ...s, records: s.records.map((r) => r.path === record.path ? { ...r, archived } : r) })));
+      setSelected((items) => new Set([...items].filter((path) => path !== record.path)));
+      setArchiveUndo(undo ? null : { record, archived: !archived });
+      setNotice(archived ? "已归档记录" : "已取消归档");
     });
   const disconnect = () =>
     run("断开连接", async () => {
@@ -549,29 +586,36 @@ export default function App() {
   }, [mcuKey, androidKey]);
   useEffect(() => {
     const find = (event: KeyboardEvent) => {
-      if (sessionDialog || baudRateDialog || !event.ctrlKey || event.altKey || event.metaKey || event.shiftKey || event.key.toLowerCase() !== "f") return;
+      if (sessionDialog || recordDialog || baudRateDialog || !event.ctrlKey || event.altKey || event.metaKey || event.shiftKey || event.key.toLowerCase() !== "f") return;
       event.preventDefault();
       const source = logLayout === "mcu" || logLayout === "android" ? logLayout : lastPane.current;
       (source === "mcu" ? mcuFind : androidFind).current?.click();
     };
     window.addEventListener("keydown", find, true);
     return () => window.removeEventListener("keydown", find, true);
-  }, [logLayout, sessionDialog, baudRateDialog]);
+  }, [logLayout, sessionDialog, recordDialog, baudRateDialog]);
   const connectionSummary = currentDevices.serialPort && currentDevices.androidSerial
     ? `${currentDevices.serialPort} + ${currentDevices.androidSerial}`
     : currentDevices.serialPort ? `仅串口 · ${currentDevices.serialPort}`
     : currentDevices.androidSerial ? `仅 Android · ${currentDevices.androidSerial}` : "未选择设备";
-  const selectable = records.filter((r) => r.path !== state.activeRecord?.path);
+  const visibleSessions = sessions.flatMap((s) => {
+    if (s.archived) return archivedView ? [s] : [];
+    const records = s.records.filter((r) => !!r.archived === archivedView);
+    if (archivedView) return records.length ? [{ ...s, records, full: null }] : [];
+    return [{ ...s, records }];
+  });
+  const viewedArchived = sessions.some((s) => (s.archived && s.full?.path === viewPath) || s.records.some((r) => r.path === viewPath && (s.archived || r.archived)));
+  const selectable = visibleSessions.flatMap((s) => s.records).filter((r) => r.path !== state.activeRecord?.path);
   const selectedPaths = selectable.filter((r) => selected.has(r.path)).map((r) => r.path);
   const selectedCount = selectedPaths.length;
-  const selectedSessions = sessions.filter((s) => s.records.some((r) => selected.has(r.path) && r.path !== state.activeRecord?.path));
+  const selectedSessions = visibleSessions.filter((s) => s.records.some((r) => selected.has(r.path) && r.path !== state.activeRecord?.path));
   const attachable = selectedSessions.filter((s) => s.full && (!state.connected || state.sessionDir !== s.path));
   const attaching = includeFull && !!attachable.length;
   const omitted = attaching ? selectedSessions.length - attachable.length : 0;
   const allSelected = selectable.length > 0 && selectedCount === selectable.length;
   useEffect(() => {
     if (selectAll.current) selectAll.current.indeterminate = selectedCount > 0 && !allSelected;
-  }, [selectedCount, allSelected]);
+  }, [selectedCount, allSelected, batchMode]);
   return (
     <div className="app-shell">
       <aside className="sidebar" hidden={!layout.left}>
@@ -587,7 +631,7 @@ export default function App() {
         <div className="sidebar-top">
           <div>
             <h2>
-              日志连接 <span>{sessions.length}</span>
+              日志连接 <span>{visibleSessions.length}</span>
             </h2>
           </div>
           <button
@@ -599,7 +643,28 @@ export default function App() {
             <RefreshCw size={16} />
           </button>
         </div>
-        <SessionList sessions={sessions} selected={selected} viewPath={viewPath} state={state} locked={locked}
+        <div className="history-controls">
+          <div className="history-tabs" role="group" aria-label="连接范围">
+            {[false, true].map((archived) => <button key={String(archived)} type="button"
+              aria-pressed={archivedView === archived} disabled={locked}
+              onClick={() => { setArchivedView(archived); setSelected(new Set()); }}>
+              {archived ? "已归档" : "当前"}
+            </button>)}
+          </div>
+          <button type="button" className="text-button" disabled={locked} aria-pressed={batchMode}
+            onClick={() => { setBatchMode(!batchMode); setSelected(new Set()); }}>
+            {batchMode ? "完成" : "批量管理"}
+          </button>
+        </div>
+        {archiveUndo && <div className="archive-notice" role="status">
+          <span>{archiveUndo.archived ? "已取消归档" : archiveUndo.record ? "已归档记录" : "已归档连接"}</span>
+          <button type="button" className="text-button" disabled={locked}
+            onClick={() => archiveUndo.record ? archiveRecord(archiveUndo.record, archiveUndo.archived, true)
+              : archiveSession(archiveUndo.session, archiveUndo.archived, true)}>撤销</button>
+          <button type="button" className="icon" aria-label="关闭归档提示" onClick={() => setArchiveUndo(null)}><X size={12} /></button>
+        </div>}
+        <SessionList sessions={visibleSessions} selected={selected} batchMode={batchMode} archived={archivedView}
+          viewPath={viewPath} state={state} locked={locked}
           onSelect={(path, checked) => setSelected((s) => {
             const next = new Set(s);
             if (checked) next.add(path);
@@ -610,8 +675,9 @@ export default function App() {
           onFull={openFull}
           onExport={exportRecords} onDeleteRecords={deleteRecords} onDeleteSession={deleteSession}
           onRename={setSessionDialog}
+          onRenameRecord={setRecordDialog} onArchive={archiveSession} onArchiveRecord={archiveRecord}
           onOpenFolder={(path) => run("打开目录", () => api.OpenFolder(path))} />
-        <div className="export-panel">
+        {batchMode && <div className="export-panel">
           <div className="batch-options">
             <label>
               <input
@@ -655,7 +721,7 @@ export default function App() {
             <Trash2 size={15} />
           </button>
           </div>
-        </div>
+        </div>}
       </aside>
       <main>
         <header className="workspace-toolbar">
@@ -873,6 +939,12 @@ export default function App() {
           aria-labelledby="operations-tab-capture"
           hidden={operationsTab !== "capture"}
         >
+          {!state.capturing && <div className="new-capture-bar">
+            <button type="button" className="secondary" disabled={locked} onClick={prepareCapture}>
+              <Plus size={16} />新建抓取
+            </button>
+            {viewedArchived && <small>已归档</small>}
+          </div>}
           {fullView ? <section className="capture-card">
             <div className="capture-heading"><span className="eyebrow">完整日志</span></div>
           </section> : <>
@@ -885,7 +957,7 @@ export default function App() {
                     ? view.interrupted
                       ? "已中断"
                       : "已保存"
-                    : "待开始"}
+                    : "新建抓取 · 待开始"}
               </span>
               {recordHistory && (
                 <button
@@ -900,7 +972,10 @@ export default function App() {
               )}
             </div>
             <div className="capture-controls">
-              <input
+              {recordHistory ? <div className="saved-record-title">
+                <strong title={title}>{displayTitle(title)}</strong>
+                <button type="button" className="text-button" disabled={locked} onClick={() => setRecordDialog(view)}>重命名</button>
+              </div> : <input
                 ref={titleInput}
                 className="title-input"
                 placeholder={view ? "未命名" : "标题（选填）"}
@@ -909,17 +984,7 @@ export default function App() {
                 disabled={locked}
                 onChange={(e) => updateField("title", e.target.value)}
                 onBlur={() => flush().catch((e) => setError(String(e)))}
-              />
-              {!state.capturing && recordHistory && (
-                <button
-                  className="secondary"
-                  disabled={locked}
-                  onClick={prepareCapture}
-                >
-                  <Plus size={16} />
-                  新建抓取
-                </button>
-              )}
+              />}
               {!state.capturing && !history && (
                 <button
                   className="primary start"
@@ -1269,6 +1334,8 @@ export default function App() {
       {sessionDialog && <SessionDialog renaming={sessionDialog}
         onCancel={() => setSessionDialog(null)}
         onSubmit={(title) => { const session = sessionDialog; setSessionDialog(null); void renameSession(session, title); }} />}
+      {recordDialog && <SessionDialog renaming={recordDialog} kind="record"
+        onCancel={() => setRecordDialog(null)} onSubmit={(title) => renameRecord(recordDialog, title)} />}
     </div>
   );
 }

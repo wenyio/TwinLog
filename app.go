@@ -171,6 +171,12 @@ func (a *App) ListSessions(root string) ([]capture.Session, error) {
 func (a *App) SaveSessionTitle(path, title string) error {
 	return a.manager.SaveSessionTitle(a.GetConfig().OutputDir, path, title)
 }
+func (a *App) SetSessionArchived(path string, archived bool) error {
+	return a.manager.SetSessionArchived(a.GetConfig().OutputDir, path, archived)
+}
+func (a *App) SetRecordArchived(path string, archived bool) error {
+	return a.manager.SetRecordArchived(a.GetConfig().OutputDir, path, archived)
+}
 func (a *App) ReadRecordLogs(path string) (capture.RecordLogs, error) {
 	return a.manager.ReadRecordLogs(path, a.GetConfig().PreviewLines)
 }

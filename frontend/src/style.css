@@ -289,24 +289,37 @@ label {
 .full-row .history-item { flex-direction: row; align-items: center; justify-content: flex-start; gap: 6px; }
 .full-row .history-item > svg { flex: none; }
 .full-row .history-item > :is(small, .session-writing) { margin-left: auto; flex: none; }
-.row-menu-trigger { flex: none; }
+.archive-action { flex: none; width: 28px; display: inline-flex; }
+.archive-action button { width: 28px; height: 28px; }
+.session-toggle { padding-right: 30px; }
+.record-row .history-item { padding-right: 30px; }
+.archive-action { position: absolute; right: 0; top: 50%; transform: translateY(-50%); }
 @media (hover: hover) {
-  .row-menu-trigger {
-    position: absolute;
-    inset-inline-end: 0;
-    top: 50%;
-    transform: translateY(-50%);
+  .archive-action {
     opacity: 0;
     pointer-events: none;
   }
-  :is(.session-row, .history-row):is(:hover, :has(> :focus-visible)) > .row-menu-trigger,
-  .row-menu-trigger[aria-expanded="true"] {
+  :is(.session-row, .record-row):is(:hover, :has(:focus-visible)) > .archive-action {
     opacity: 1;
     pointer-events: auto;
     background: var(--surface-subtle);
   }
-  .row-menu-trigger:is(:hover, [aria-expanded="true"]) { background: var(--surface-selected); }
+  .archive-action:hover { background: var(--surface-selected); }
 }
+.history-controls { display: flex; align-items: center; justify-content: space-between; padding: 0 12px 8px; gap: 6px; }
+.history-tabs { display: flex; gap: 2px; }
+.history-tabs button { padding: 4px 8px; font-size: 11px; color: var(--text-secondary); }
+.history-tabs button[aria-pressed="true"] { background: var(--surface-selected); color: var(--text); }
+.history-controls > button { font-size: 11px; white-space: nowrap; padding: 4px; }
+.archive-notice { display: flex; align-items: center; gap: 5px; padding: 4px 12px; font-size: 11px; }
+.archive-notice > span { flex: 1; }
+.archive-notice button { flex: none; font-size: 11px; padding: 3px; }
+.new-capture-bar { display: flex; align-items: center; gap: 8px; }
+.new-capture-bar > button { flex: 1; }
+.new-capture-bar small { color: var(--text-secondary); }
+.saved-record-title { display: flex; align-items: flex-start; gap: 6px; min-width: 0; }
+.saved-record-title strong { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 14px; line-height: 22px; }
+.saved-record-title button { flex: none; font-size: 11px; padding: 2px; }
 .row-popover {
   position: fixed;
   z-index: 30;

@@ -34,6 +34,7 @@ try {
   const page = await browser.newPage({
     viewport: { width: 1080, height: 640 },
   });
+  page.setDefaultTimeout(12000);
   await page.addInitScript(() => {
     localStorage.setItem(
       "twinlog.layout",
@@ -221,6 +222,18 @@ try {
   const title = page.getByRole("textbox", { name: "抓取标题", exact: true });
   const notes = page.getByPlaceholder("输入备注", { exact: true });
   const newCapture = capture.getByRole("button", { name: "新建抓取", exact: true });
+  const savedTitle = () => page.locator('.saved-record-title strong');
+  const renameRecord = async (text, fail = false) => {
+    await capture.getByRole('button', { name: '重命名', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: '重命名记录', exact: true });
+    await dialog.getByRole('textbox', { name: '记录标题', exact: true }).fill(text);
+    await dialog.getByRole('button', { name: '保存', exact: true }).click();
+    if (fail) {
+      await dialog.getByRole('alert').waitFor();
+      return dialog;
+    }
+    await dialog.waitFor({ state: 'hidden' });
+  };
   const connection = page.getByRole("tabpanel", {
     name: "设备连接",
     exact: true,
@@ -248,7 +261,7 @@ try {
   await page.waitForFunction(
     () => document.activeElement?.getAttribute("aria-label") === "抓取标题",
   );
-  assert.ok(await capture.getByText("待开始", { exact: true }).isVisible());
+  assert.ok(await capture.getByText("新建抓取 · 待开始", { exact: true }).isVisible());
   assert.ok(
     await capture
       .getByRole("button", { name: "开始抓取", exact: true })
@@ -257,7 +270,7 @@ try {
   await title.fill("未开始草稿");
   await notes.fill("草稿备注");
   await page.evaluate(() => window.sendLogs());
-  assert.equal(await newCapture.count(), 0);
+  assert.equal(await newCapture.count(), 1);
   assert.equal(await page.evaluate(() => window.calls.start), 0);
   await page.getByRole("tab", { name: "设备连接", exact: true }).click();
   assert.equal(await fullLogs.isChecked(), false);
@@ -267,8 +280,8 @@ try {
   await page.waitForFunction(() => window.calls.configSaves.at(-1)?.saveFullLogs === true);
   await page.locator(".history-row button").first().click();
   await newCapture.click();
-  assert.ok(await connection.isVisible());
-  assert.equal(await capture.isVisible(), false);
+  assert.ok(await capture.isVisible());
+  await page.getByRole("tab", { name: "设备连接", exact: true }).click();
   await connect();
   await title.waitFor();
   await page.getByText("已连接 · 全量记录中", { exact: true }).waitFor();
@@ -278,7 +291,8 @@ try {
   assert.equal(await title.inputValue(), "未开始草稿");
   assert.equal(await notes.inputValue(), "草稿备注");
   await page.locator(".history-row button").first().click();
-  assert.equal(await title.inputValue(), "旧记录");
+  assert.equal(await title.count(), 0, 'history has no editable capture-title field');
+  assert.equal(await savedTitle().textContent(), "旧记录");
   await page.getByText("test/old MCU 历史内容", { exact: false }).waitFor();
   assert.ok(await page.getByText("test/old Android 历史内容", { exact: false }).isVisible());
   const historyBanner = page.locator(".history-banner");
@@ -313,7 +327,7 @@ try {
     1,
   );
   assert.ok(await newCapture.isVisible());
-  await title.fill("更新历史标题");
+  await renameRecord("更新历史标题");
   await notes.fill("历史补充备注");
   await page.getByRole("button", { name: "收起操作栏", exact: true }).click();
   await returnToLive.click();
@@ -337,6 +351,9 @@ try {
     () => document.activeElement?.getAttribute("aria-label") === "抓取标题",
   );
   assert.equal(await notes.inputValue(), "草稿备注");
+  await title.fill('下一条的标题');
+  await notes.fill('下一条的备注');
+  assert.deepEqual(await page.evaluate(() => window.calls.titleSaves), [{ path: 'test/old', title: '更新历史标题' }]);
   await page.evaluate(() => (window.calls.failStart = false));
   await title.fill("");
   await capture.getByRole("button", { name: "开始抓取", exact: true }).click();
@@ -349,7 +366,9 @@ try {
   }
   assert.ok(await title.isEnabled());
   assert.equal(await newCapture.count(), 0);
-  assert.ok(await page.getByRole("checkbox", { name: "选择 未命名", exact: true }).isDisabled());
+  assert.equal(await page.locator('.history-row input').count(), 0);
+  await page.getByRole('button', { name: '批量管理', exact: true }).click();
+  assert.ok(await page.getByRole('checkbox', { name: '选择 未命名', exact: true }).isDisabled());
   await page.getByRole("checkbox", { name: "全选记录", exact: true }).check();
   assert.equal(await page.locator('.history-row input:checked').count(), 1);
   assert.ok(await page.getByRole("button", { name: "删除所选", exact: true }).isDisabled());
@@ -372,7 +391,7 @@ try {
   await page.evaluate(() => window.releaseTitleSave());
   await page.getByRole("button", { name: "展开操作栏", exact: true }).click();
   await capture.getByText("已保存", { exact: true }).first().waitFor();
-  assert.equal(await title.inputValue(), "抓取中修改");
+  assert.equal(await savedTitle().textContent(), "抓取中修改");
   assert.equal(await notes.inputValue(), "抓取中补充");
   await notes.fill("停止后补充");
   await newCapture.click();
@@ -396,11 +415,11 @@ try {
   // A failed note save must keep the selected record and allow a retry before switching.
   await page.locator(".history-row button").first().click();
   await page.evaluate(() => (window.calls.failSave = true));
-  await title.fill("补充标题");
+  await renameRecord("补充标题");
   await notes.fill("失败后重试备注");
   await newCapture.click();
   await page.getByText("Error: 模拟备注失败", { exact: true }).waitFor();
-  assert.equal(await title.inputValue(), "补充标题");
+  assert.equal(await savedTitle().textContent(), "补充标题");
   assert.equal(await notes.inputValue(), "失败后重试备注");
   await page.evaluate(() => (window.calls.failSave = false));
   await newCapture.click();
@@ -429,22 +448,20 @@ try {
   assert.equal(await selectAll.evaluate((el) => el.indeterminate), true);
   const selectedRecord = page.getByRole("checkbox", { name: "选择 补充标题", exact: true });
   await selectedRecord.check();
-  await title.fill("");
+  await renameRecord("");
   await page.getByRole("button", { name: /导出所选/ }).click();
   await page.getByText("已导出：test/export.zip", { exact: true }).waitFor();
   assert.equal(await page.evaluate(() => window.calls.exported[0].find((r) => r.path === "test/new").title), "");
   await page.evaluate(() => (window.calls.failTitleSave = true));
-  await title.fill("退出前修改");
+  const failedRename = await renameRecord('退出前修改', true);
+  assert.equal(await savedTitle().textContent(), '未命名');
+  await page.evaluate(() => (window.calls.failTitleSave = false));
+  await failedRename.getByRole('button', { name: '保存', exact: true }).click();
+  await failedRename.waitFor({ state: 'hidden' });
+  await notes.fill('退出前备注');
   await page.evaluate(() => window.requestClose());
-  await page.waitForFunction(() => window.calls.closeAcks.at(-1)?.ok === false);
-  await capture.getByText("未保存", { exact: true }).waitFor();
-  assert.equal(await title.inputValue(), "退出前修改");
-  await page.evaluate(() => {
-    window.calls.failTitleSave = false;
-    window.requestClose();
-  });
   await page.waitForFunction(() => window.calls.closeAcks.at(-1)?.ok === true);
-  assert.deepEqual(await page.evaluate(() => window.calls.closeAcks.at(-1)), { ok: true, title: "退出前修改" });
+  assert.deepEqual(await page.evaluate(() => window.calls.closeAcks.at(-1)), { ok: true, title: '退出前修改' });
   await selectAll.uncheck();
   await selectAll.check();
   assert.equal(await page.locator('.history-row input:checked').count(), 2);
@@ -457,7 +474,7 @@ try {
   await page.getByRole("button", { name: "删除所选", exact: true }).click();
   await page.waitForFunction(() => !document.querySelector('.delete-records').disabled);
   assert.equal(await page.locator('.history-row').count(), 2);
-  assert.equal(await title.inputValue(), "退出前修改");
+  assert.equal(await savedTitle().textContent(), "退出前修改");
   assert.equal(await page.locator('.history-row input:checked').count(), 1);
   assert.deepEqual(await page.evaluate(() => window.calls.deleted), []);
   await notes.fill("删除前备注");
@@ -570,6 +587,7 @@ try {
   );
 
   const historyPage = await browser.newPage({ viewport: { width: 1080, height: 640 } });
+  historyPage.setDefaultTimeout(12000);
   await historyPage.addInitScript(() => {
     const config = { outputDir: "test", adbPath: "adb", androidSerial: "device" };
     const record = (path, title) => ({ path, title, startedAt: "2026-11-17T02:00:00Z", endedAt: "2026-11-17T02:01:00Z", notes: "保留备注", package: "", source: "android" });
@@ -599,6 +617,20 @@ try {
         state.connected = true;
         window.emitHistoryEvent("state", state);
       },
+      SetRecordArchived: async (path, archived) => {
+        if (window.failArchive) throw Error('模拟归档失败');
+        sessions.flatMap((s) => s.records).find((r) => r.path === path).archived = archived;
+      },
+      SetSessionArchived: async (path, archived) => {
+        if (window.failArchive) throw Error('模拟归档失败');
+        if (state.connected && state.sessionDir === path) throw Error('请先断开连接');
+        sessions.find((s) => s.path === path).archived = archived;
+      },
+      ReadRecordLogs: async (path) => ({ mcu: { text: '', bytes: 0 }, android: { text: '记录日志 ' + path, bytes: 20 } }),
+      SaveNotes: async (path, notes) => {
+        if (window.failHistorySave) throw Error('模拟备注失败');
+        sessions.flatMap((s) => s.records).find((r) => r.path === path).notes = notes;
+      },
       SaveSessionTitle: async (path, title) => {
         sessions.find((s) => s.path === path).title = title;
         window.sessionCalls.push({ path, title });
@@ -625,9 +657,12 @@ try {
   await groups.nth(1).waitFor();
   const activeSession = groups.first();
   const oldSession = groups.nth(1);
-  assert.equal(await activeSession.locator(".session-count").textContent(), "0");
+  assert.equal(await activeSession.locator(".session-count").textContent(), "0 条");
   assert.equal(await activeSession.locator(".session-count").getAttribute("title"), "0 条记录");
-  assert.equal(await oldSession.locator(".session-count").textContent(), "2");
+  assert.equal(await oldSession.locator(".session-count").textContent(), "2 条");
+  assert.equal(await historyPage.locator('.export-panel').count(), 0);
+  assert.equal(await historyPage.locator('.record-row input').count(), 0);
+  await historyPage.getByRole('button', { name: '批量管理', exact: true }).click();
   const batch = historyPage.locator(".export-panel");
   const batchSelectAll = batch.getByRole("checkbox", { name: "全选记录", exact: true });
   const includeFull = batch.getByRole("checkbox", { name: "附带完整日志" });
@@ -637,10 +672,17 @@ try {
   assert.equal(await oldSession.locator('input:checked').count(), 2, "select all includes collapsed connections");
   await batch.getByRole("button", { name: "导出所选 · 2", exact: true }).waitFor();
   await batchSelectAll.uncheck();
+  // Mouse focus must not pin the icon after leaving the row. Keyboard focus can reveal it.
+  await activeSession.locator('.session-toggle').click();
+  await historyPage.mouse.move(500, 500);
+  assert.equal(await activeSession.locator('.archive-action').evaluate((el) => getComputedStyle(el).opacity), '0');
+  await historyPage.keyboard.press('Shift+Tab');
+  await historyPage.keyboard.press('Tab');
+  assert.equal(await activeSession.locator('.archive-action').evaluate((el) => getComputedStyle(el).opacity), '1');
+  await activeSession.locator('.session-toggle').click();
   const activeToggle = activeSession.locator(".session-toggle");
   const showMenu = async (trigger) => {
-    await trigger.locator("..").hover();
-    await trigger.click();
+    await trigger.click({ button: "right" });
   };
   assert.ok(await activeSession.locator(".full-row .session-writing").isVisible());
   await activeToggle.click();
@@ -651,32 +693,20 @@ try {
   assert.ok(await activeSession.locator(".full-row").isHidden());
   await activeToggle.click();
   const fullRow = activeSession.locator(".full-row");
-  const fullMenu = activeSession.getByRole("button", { name: /完整日志操作/ });
-  const fullItem = fullRow.locator(".history-item");
-  const opacity = () => fullMenu.evaluate((el) => getComputedStyle(el).opacity);
-  assert.equal(await opacity(), "0");
-  assert.equal(await fullMenu.evaluate((el) => getComputedStyle(el).pointerEvents), "none");
+  const fullItem = fullRow.locator('.history-item');
+  assert.equal(await historyPage.locator('.row-menu-trigger').count(), 0);
   const fullBounds = await fullItem.boundingBox();
   await fullRow.hover();
-  assert.equal(await opacity(), "1");
-  assert.deepEqual(await fullItem.boundingBox(), fullBounds, "menu must not change the row layout");
-  const spinnerBox = await fullRow.locator(".session-writing").boundingBox();
-  const menuBox = await fullMenu.boundingBox();
-  assert.ok(spinnerBox.x >= menuBox.x && spinnerBox.x + spinnerBox.width <= menuBox.x + menuBox.width);
-  await historyPage.mouse.move(0, 0);
-  assert.equal(await opacity(), "0");
+  assert.deepEqual(await fullItem.boundingBox(), fullBounds);
   await fullItem.focus();
-  await historyPage.keyboard.press("Tab");
-  assert.ok(await fullMenu.evaluate((el) => el === document.activeElement));
-  assert.equal(await opacity(), "1");
-  await historyPage.keyboard.press("Enter");
-  const action = (name) => historyPage.locator(".row-popover").getByRole("button", { name, exact: true });
-  await action("打开目录").waitFor();
-  assert.equal(await opacity(), "1", "the trigger stays visible while the popover owns focus");
-  assert.ok(await action("删除完整日志").isDisabled());
-  assert.ok(await action("导出完整日志").isDisabled());
-  await historyPage.keyboard.press("Escape");
-  assert.ok(await fullMenu.evaluate((el) => el === document.activeElement));
+  await historyPage.keyboard.press('Shift+F10');
+  const action = (name) => historyPage.getByRole('menuitem', { name, exact: true });
+  await action('打开目录').waitFor();
+  assert.ok(await action('删除完整日志').isDisabled());
+  assert.ok(await action('导出完整日志').isDisabled());
+  await historyPage.keyboard.press('ArrowDown');
+  await historyPage.keyboard.press('Escape');
+  assert.ok(await fullItem.evaluate((el) => el === document.activeElement));
   const activeFull = activeSession.locator(".full-row .history-item");
   const oldFull = oldSession.locator(".full-row .history-item");
   const liveLog = historyPage.locator(".log-pane pre");
@@ -714,12 +744,12 @@ try {
   await oldFull.click();
   await historyPage.getByText(/完整 Android 日志 test\/old/).waitFor();
   const logBounds = await historyPage.locator(".log-pane").boundingBox();
-  await showMenu(oldSession.getByRole("button", { name: /完整日志操作/ }));
+  await showMenu(oldSession.locator(".full-row"));
   assert.deepEqual(await historyPage.locator(".log-pane").boundingBox(), logBounds);
   await action("导出完整日志").click();
   await historyPage.getByText("已导出：test/history.zip", { exact: true }).waitFor();
   assert.deepEqual(await historyPage.evaluate(() => window.historyCalls[0]), [[], ["test/old"]]);
-  await showMenu(oldSession.getByRole("button", { name: /记录操作 · 连接测试/ }));
+  await showMenu(oldSession.locator(".record-row").filter({ hasText: "连接测试" }).first());
   await action("导出此记录").click();
   await historyPage.getByText("已导出：test/history.zip", { exact: true }).waitFor();
   assert.deepEqual(await historyPage.evaluate(() => window.historyCalls[1]), [["test/old/r1"], []]);
@@ -727,21 +757,130 @@ try {
   await historyPage.getByRole("button", { name: /导出所选/ }).click();
   await historyPage.getByText("已导出：test/history.zip", { exact: true }).waitFor();
   assert.deepEqual(await historyPage.evaluate(() => window.historyCalls[2]), [["test/old/r2"], ["test/old"]]);
-  await showMenu(oldSession.getByRole("button", { name: /完整日志操作/ }));
+  // Archive one record without hiding its sibling or the connection's full log.
+  const firstRecord = oldSession.locator('.record-row').filter({ hasText: '连接测试' }).first();
+  await firstRecord.locator('.history-item').click();
+  const recordPreview = await historyPage.locator('.log-pane pre').textContent();
+  await historyPage.mouse.move(500, 500);
+  assert.equal(await firstRecord.locator('.archive-action').evaluate((el) => getComputedStyle(el).opacity), '0');
+  const recordBounds = await firstRecord.locator('.history-item').boundingBox();
+  await firstRecord.hover();
+  assert.equal(await firstRecord.locator('.archive-action').evaluate((el) => getComputedStyle(el).opacity), '1');
+  assert.deepEqual(await firstRecord.locator('.history-item').boundingBox(), recordBounds);
+  await historyPage.evaluate(() => { window.failArchive = true; });
+  await firstRecord.getByRole('button', { name: '归档记录 · 连接测试', exact: true }).click();
+  await historyPage.getByText('Error: 模拟归档失败', { exact: true }).waitFor();
+  assert.equal(await oldSession.locator('.record-row').count(), 2);
+  await historyPage.evaluate(() => { window.failArchive = false; });
+  await firstRecord.hover();
+  await firstRecord.getByRole('button', { name: '归档记录 · 连接测试', exact: true }).click();
+  await historyPage.getByRole('status').getByText('已归档记录', { exact: true }).waitFor();
+  assert.equal(await oldSession.locator('.record-row').count(), 1);
+  assert.ok(await oldSession.locator('.full-row').isVisible());
+  assert.equal(await historyPage.locator('.log-pane pre').textContent(), recordPreview);
+  await historyPage.getByRole('button', { name: '刷新连接', exact: true }).click();
+  await historyPage.getByRole('button', { name: '已归档', exact: true }).click();
+  assert.equal(await groups.count(), 1);
+  assert.equal(await groups.first().locator('.record-row').count(), 1);
+  assert.equal(await groups.first().locator('.full-row').count(), 0);
+  await groups.first().locator('.session-row').hover();
+  assert.equal(await groups.first().locator('.session-row .archive-action').count(), 0, 'partial archive group has no connection archive button');
+  await showMenu(groups.first().locator('.session-row'));
+  assert.equal(await action('归档连接').count(), 0, 'partial archive group cannot archive the unarchived connection');
+  await historyPage.keyboard.press('Escape');
+  await groups.first().locator('.record-row').hover();
+  assert.ok(await groups.first().getByRole('button', { name: '取消记录归档 · 连接测试', exact: true }).isVisible());
+  await batchSelectAll.check();
+  assert.equal(await historyPage.locator('.record-row input:checked').count(), 1);
+  await showMenu(groups.first().locator('.record-row'));
+  await action('取消记录归档').click();
+  await historyPage.getByText('还没有已归档连接', { exact: true }).waitFor();
+  await historyPage.getByRole('button', { name: '当前', exact: true }).click();
+  await firstRecord.waitFor();
+  assert.equal(await oldSession.locator('.record-row').count(), 2);
+  await firstRecord.hover();
+  await firstRecord.getByRole('button', { name: '归档记录 · 连接测试', exact: true }).click();
+  await historyPage.getByRole('button', { name: '撤销', exact: true }).click();
+  await firstRecord.waitFor();
+  await oldSession.getByRole('checkbox', { name: '选择 重连测试' }).check();
+  // Archive retains viewed logs and notes; failures leave the list untouched.
+  await oldSession.locator('.record-row .history-item').first().click();
+  const historyNotes = historyPage.getByPlaceholder('输入备注', { exact: true });
+  await historyPage.evaluate(() => { window.failHistorySave = true; });
+  await historyNotes.fill('归档前备注');
+  await oldSession.locator('.session-row').hover();
+  await oldSession.getByRole('button', { name: /归档连接/ }).click();
+  await historyPage.getByText('Error: 模拟备注失败', { exact: true }).waitFor();
+  assert.equal(await groups.count(), 2);
+  assert.equal(await historyNotes.inputValue(), '归档前备注');
+  await historyPage.evaluate(() => { window.failHistorySave = false; window.failArchive = true; });
+  await oldSession.locator('.session-row').hover();
+  await oldSession.getByRole('button', { name: /归档连接/ }).click();
+  await historyPage.getByText('Error: 模拟归档失败', { exact: true }).waitFor();
+  assert.equal(await groups.count(), 2);
+  await historyPage.evaluate(() => { window.failArchive = false; });
+  const beforeArchive = await historyPage.locator('.log-pane pre').textContent();
+  await oldSession.locator('.session-row').hover();
+  const sessionBounds = await oldSession.locator('.session-toggle').boundingBox();
+  await oldSession.getByRole('button', { name: /归档连接/ }).click();
+  await historyPage.getByRole('status').getByText('已归档连接').waitFor();
+  assert.equal(await groups.count(), 1);
+  assert.equal(await historyPage.locator('.log-pane pre').textContent(), beforeArchive);
+  assert.equal(await historyNotes.inputValue(), '归档前备注');
+  assert.equal(await historyPage.locator('.record-row input:checked').count(), 0);
+  await historyPage.getByRole('button', { name: '已归档', exact: true }).click();
+  assert.equal(await groups.count(), 1);
+  assert.equal(await groups.first().locator('.record-row input:checked').count(), 0);
+  await groups.first().locator('.session-row').hover();
+  assert.ok(await groups.first().getByRole('button', { name: /取消归档/ }).isEnabled());
+  await batchSelectAll.check();
+  assert.equal(await historyPage.locator('.record-row input:checked').count(), 2);
+  await historyPage.getByRole('button', { name: '当前', exact: true }).click();
+  assert.equal(await historyPage.locator('.record-row input:checked').count(), 0);
+  await historyPage.getByRole('button', { name: '撤销', exact: true }).click();
+  await groups.nth(1).waitFor();
+  assert.deepEqual(await oldSession.locator('.session-toggle').boundingBox(), sessionBounds);
+  await historyPage.getByRole('button', { name: '刷新连接', exact: true }).click();
+  await groups.nth(1).waitFor();
+  await oldSession.getByRole('checkbox', { name: '选择 重连测试' }).check();
+  await oldSession.locator('.session-row').hover();
+  await oldSession.getByRole('button', { name: /归档连接/ }).click();
+  await groups.nth(1).waitFor({ state: 'detached' });
+  await historyPage.getByRole('button', { name: '刷新连接', exact: true }).click();
+  await historyPage.getByRole('button', { name: '已归档', exact: true }).click();
+  await groups.first().locator('.session-row').hover();
+  await groups.first().getByRole('button', { name: /取消归档/ }).click();
+  await historyPage.getByText('还没有已归档连接', { exact: true }).waitFor();
+  await historyPage.getByRole('button', { name: '当前', exact: true }).click();
+  await groups.nth(1).waitFor();
+  await oldSession.getByRole('checkbox', { name: '选择 重连测试' }).check();
+  if (process.env.TWINLOG_ARCHIVE_SCREENSHOT) {
+    await historyPage.getByRole('button', { name: '完成', exact: true }).click();
+    await oldSession.locator('.session-row').hover();
+    await historyPage.screenshot({ path: process.env.TWINLOG_ARCHIVE_SCREENSHOT });
+    await historyPage.getByRole('button', { name: '批量管理', exact: true }).click();
+    await oldSession.getByRole('checkbox', { name: '选择 重连测试' }).check();
+  }
+  // Right-click on another row keeps the current log and batch selection.
+  await showMenu(oldSession.locator('.full-row'));
+  assert.equal(await historyPage.locator('.log-pane pre').textContent(), beforeArchive);
+  assert.ok(await oldSession.getByRole('checkbox', { name: '选择 重连测试' }).isChecked());
+  await historyPage.keyboard.press('Escape');
+  await showMenu(oldSession.locator(".full-row"));
   await action("删除完整日志").click();
   await historyPage.getByText("已删除完整日志", { exact: true }).waitFor();
   assert.ok(await oldSession.locator(".full-row").isHidden());
   assert.equal(await oldSession.locator(".record-row").count(), 2);
   assert.ok(await oldSession.getByRole("checkbox", { name: "选择 重连测试" }).isChecked());
   assert.ok(await historyPage.getByRole("checkbox", { name: "附带完整日志" }).isDisabled());
-  await showMenu(oldSession.getByRole("button", { name: /连接操作/ }));
+  await showMenu(oldSession.locator(".session-row"));
   await action("删除连接").click();
   await historyPage.getByText("已删除连接", { exact: true }).waitFor();
   assert.equal(await groups.count(), 1);
   assert.deepEqual(await historyPage.evaluate(() => window.historyCalls.slice(3)), [["test/old", true], ["test/old", false]]);
   const historyConnection = historyPage.getByRole("tabpanel", { name: "设备连接", exact: true });
   const renameDialog = historyPage.getByRole("dialog", { name: "重命名连接" });
-  await showMenu(activeSession.getByRole("button", { name: /连接操作/ }));
+  await showMenu(activeSession.locator(".session-row"));
   await action("重命名连接").click();
   await renameDialog.getByRole("textbox", { name: "连接名称" }).fill("参数下发失败");
   await renameDialog.getByRole("button", { name: "保存", exact: true }).click();
@@ -756,7 +895,7 @@ try {
   const previous = groups.nth(1);
   assert.equal(await previous.locator(".session-toggle span").textContent(), "参数下发失败");
   assert.ok(await reconnected.locator(".full-row .session-writing").isVisible());
-  await showMenu(previous.getByRole("button", { name: /连接操作 · 参数下发失败/ }));
+  await showMenu(previous.locator(".session-row"));
   await action("重命名连接").click();
   assert.equal(await renameDialog.getByRole("textbox", { name: "连接名称" }).inputValue(), "参数下发失败");
   await renameDialog.getByRole("textbox", { name: "连接名称" }).fill("复测同一问题");
@@ -766,15 +905,15 @@ try {
     { path: "test/live", title: "参数下发失败" }, "connect",
     { path: "test/live", title: "复测同一问题" },
   ]);
-  await showMenu(reconnected.getByRole("button", { name: /连接操作/ }));
+  await showMenu(reconnected.locator(".session-row"));
   assert.ok(await action("删除连接").isDisabled());
   await historyPage.keyboard.press("Escape");
-  await showMenu(previous.getByRole("button", { name: /连接操作/ }));
+  await showMenu(previous.locator(".session-row"));
   await action("删除连接").click();
   await historyPage.getByText("已删除连接", { exact: true }).waitFor();
   assert.equal(await groups.count(), 1);
   assert.deepEqual(await historyPage.evaluate(() => window.historyCalls.at(-1)), ["test/live", false]);
-  console.log("PASS: bottom batch selection, hover and keyboard menus without layout shift, live shortcut, historical full preview, export and deletion scope");
+  console.log("PASS: optional batch selection, context and keyboard menus, archive/undo/failure scope, live shortcut, preview, export and deletion");
   console.log("PASS: direct reconnect, independent connection names and separate full logs");
 } finally {
   await browser?.close();

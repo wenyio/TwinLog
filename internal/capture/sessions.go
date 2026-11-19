@@ -21,6 +21,7 @@ type Session struct {
 	Path      string   `json:"path"`
 	StartedAt string   `json:"startedAt"`
 	Title     string   `json:"title,omitempty"`
+	Archived  bool     `json:"archived,omitempty"`
 	Managed   bool     `json:"managed"`
 	Records   []Record `json:"records"`
 	Full      *FullLog `json:"full"`
@@ -29,6 +30,7 @@ type Session struct {
 type sessionMetadata struct {
 	StartedAt string
 	Title     string
+	Archived  bool
 }
 
 func readSessionMetadata(path string) (sessionMetadata, bool) {
@@ -69,6 +71,35 @@ func (m *Manager) SaveSessionTitle(root, path, title string) error {
 		delete(meta, "title")
 	} else {
 		meta["title"] = title
+	}
+	return writeJSON(file, meta)
+}
+
+// Archiving only changes metadata; log files stay at their original paths.
+func (m *Manager) SetSessionArchived(root, path string, archived bool) error {
+	m.op.Lock()
+	defer m.op.Unlock()
+	p, err := managedSession(root, path)
+	if err != nil {
+		return err
+	}
+	state := m.State()
+	if state.Connected && sameResolvedPath(state.SessionDir, p) {
+		return fmt.Errorf("请先断开此会话的设备连接再归档")
+	}
+	file := filepath.Join(p, "session.json")
+	b, err := os.ReadFile(file)
+	if err != nil {
+		return err
+	}
+	var meta map[string]any
+	if err = json.Unmarshal(b, &meta); err != nil {
+		return err
+	}
+	if archived {
+		meta["archived"] = true
+	} else {
+		delete(meta, "archived")
 	}
 	return writeJSON(file, meta)
 }
@@ -115,7 +146,7 @@ func (m *Manager) ListSessions(root string) ([]Session, error) {
 		}
 		path := filepath.Join(root, entry.Name())
 		if meta, ok := readSessionMetadata(path); ok {
-			byPath[path] = &Session{Path: path, StartedAt: meta.StartedAt, Title: meta.Title, Managed: true, Records: []Record{}, Full: fullLogInfo(filepath.Join(path, "full"))}
+			byPath[path] = &Session{Path: path, StartedAt: meta.StartedAt, Title: meta.Title, Archived: meta.Archived, Managed: true, Records: []Record{}, Full: fullLogInfo(filepath.Join(path, "full"))}
 		}
 	}
 	records, err := m.ListRecords(root)
