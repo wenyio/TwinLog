@@ -596,6 +596,9 @@ try {
       { path: "test/live", startedAt: "2026-11-18T02:00:00Z", managed: true, records: [], full: full("test/live") },
       { path: "test/old", startedAt: "2026-11-17T01:00:00Z", managed: true, records: [record("test/old/r1", "连接测试"), record("test/old/r2", "重连测试")], full: full("test/old") },
     ];
+    sessions[1].records[0].package = 'com.example.application.with.a.very.long.package.name';
+    sessions[1].records[0].filterGaps = true;
+    sessions[1].records[1].interrupted = true;
     window.historyCalls = [];
     window.fullReads = [];
     window.sessionCalls = [];
@@ -657,9 +660,11 @@ try {
   await groups.nth(1).waitFor();
   const activeSession = groups.first();
   const oldSession = groups.nth(1);
-  assert.equal(await activeSession.locator(".session-count").textContent(), "0 条");
+  assert.equal(await activeSession.locator(".session-count").textContent(), "0");
   assert.equal(await activeSession.locator(".session-count").getAttribute("title"), "0 条记录");
-  assert.equal(await oldSession.locator(".session-count").textContent(), "2 条");
+  assert.equal(await oldSession.locator(".session-count").textContent(), "2");
+  assert.match(await activeSession.locator('.session-toggle > span').textContent(), /11月18日/);
+  assert.equal(await oldSession.evaluate((el) => getComputedStyle(el).borderTopWidth), '1px');
   assert.equal(await historyPage.locator('.export-panel').count(), 0);
   assert.equal(await historyPage.locator('.record-row input').count(), 0);
   await historyPage.getByRole('button', { name: '批量管理', exact: true }).click();
@@ -689,7 +694,16 @@ try {
   assert.ok(await activeToggle.locator(".session-writing").isVisible());
   const countBox = await activeToggle.locator(".session-count").boundingBox();
   const writingBox = await activeToggle.locator(".session-writing").boundingBox();
-  assert.ok(countBox.x + countBox.width <= writingBox.x, "writing indicator follows the count without overlap");
+  assert.ok(writingBox.x + writingBox.width <= countBox.x, "writing indicator precedes the count without overlap");
+  const toggleBox = await activeToggle.boundingBox();
+  assert.ok(toggleBox.x + toggleBox.width - countBox.x - countBox.width <= 6, 'count aligns with the right edge');
+  const toggleBounds = await activeToggle.boundingBox();
+  const countBounds = await activeToggle.locator('.session-count').boundingBox();
+  await activeSession.locator('.session-row').hover();
+  const archiveBounds = await activeSession.locator('.archive-action').boundingBox();
+  assert.ok(archiveBounds.x <= countBounds.x && archiveBounds.x + archiveBounds.width >= countBounds.x + countBounds.width, 'archive button covers the count');
+  assert.deepEqual(await activeToggle.boundingBox(), toggleBounds, 'hover does not move the connection label');
+  assert.deepEqual(await activeToggle.locator('.session-count').boundingBox(), countBounds, 'hover does not move the count');
   assert.ok(await activeSession.locator(".full-row").isHidden());
   await activeToggle.click();
   const fullRow = activeSession.locator(".full-row");
@@ -760,6 +774,15 @@ try {
   // Archive one record without hiding its sibling or the connection's full log.
   const firstRecord = oldSession.locator('.record-row').filter({ hasText: '连接测试' }).first();
   await firstRecord.locator('.history-item').click();
+  const recordDetail = await firstRecord.locator('.history-item').getAttribute('title');
+  assert.ok(recordDetail.includes('时间：2026/11/17'));
+  assert.ok(recordDetail.includes('应用：com.example.application.with.a.very.long.package.name'));
+  assert.ok(recordDetail.includes('状态：应用过滤有缺口'));
+  assert.ok((await oldSession.locator('.record-row .history-item').last().getAttribute('title')).includes('状态：中断'));
+  assert.equal(await firstRecord.locator('.history-item').textContent(), '连接测试', 'only the title is visible');
+  assert.equal(await firstRecord.locator('strong').evaluate((el) => getComputedStyle(el).whiteSpace), 'nowrap');
+  assert.equal(await firstRecord.evaluate((el) => getComputedStyle(el).borderLeftColor), 'rgba(0, 0, 0, 0)');
+  assert.equal(await firstRecord.evaluate((el) => getComputedStyle(el, '::before').content), 'none');
   const recordPreview = await historyPage.locator('.log-pane pre').textContent();
   await historyPage.mouse.move(500, 500);
   assert.equal(await firstRecord.locator('.archive-action').evaluate((el) => getComputedStyle(el).opacity), '0');
@@ -767,14 +790,28 @@ try {
   await firstRecord.hover();
   assert.equal(await firstRecord.locator('.archive-action').evaluate((el) => getComputedStyle(el).opacity), '1');
   assert.deepEqual(await firstRecord.locator('.history-item').boundingBox(), recordBounds);
+  const siblingRecord = oldSession.locator('.record-row').last();
+  await siblingRecord.hover();
+  const selectedBackground = await firstRecord.evaluate((el) => getComputedStyle(el).backgroundColor);
+  assert.equal(await siblingRecord.evaluate((el) => getComputedStyle(el).backgroundColor), selectedBackground, 'hover and selection use the same background');
+  assert.equal(await siblingRecord.locator('.archive-action').evaluate((el) => getComputedStyle(el).backgroundColor), selectedBackground, 'archive action blends with the row background');
+  await historyPage.mouse.move(500, 500);
+  assert.equal(await siblingRecord.evaluate((el) => getComputedStyle(el).backgroundColor), 'rgba(0, 0, 0, 0)', 'hover background clears after leaving the row');
+  assert.equal(await firstRecord.evaluate((el) => getComputedStyle(el).backgroundColor), selectedBackground, 'selection remains after the pointer leaves');
+  await firstRecord.hover();
   await historyPage.evaluate(() => { window.failArchive = true; });
   await firstRecord.getByRole('button', { name: '归档记录 · 连接测试', exact: true }).click();
   await historyPage.getByText('Error: 模拟归档失败', { exact: true }).waitFor();
   assert.equal(await oldSession.locator('.record-row').count(), 2);
   await historyPage.evaluate(() => { window.failArchive = false; });
   await firstRecord.hover();
+  const listBounds = await historyPage.locator('.history-list').boundingBox();
   await firstRecord.getByRole('button', { name: '归档记录 · 连接测试', exact: true }).click();
   await historyPage.getByRole('status').getByText('已归档记录', { exact: true }).waitFor();
+  assert.deepEqual(await historyPage.locator('.history-list').boundingBox(), listBounds, 'archive notice does not resize or move the list');
+  const noticeBounds = await historyPage.locator('.archive-notice').boundingBox();
+  const batchBounds = await batch.boundingBox();
+  assert.ok(noticeBounds.y + noticeBounds.height <= batchBounds.y, 'floating notice stays above batch actions');
   assert.equal(await oldSession.locator('.record-row').count(), 1);
   assert.ok(await oldSession.locator('.full-row').isVisible());
   assert.equal(await historyPage.locator('.log-pane pre').textContent(), recordPreview);

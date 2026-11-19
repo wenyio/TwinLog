@@ -656,13 +656,7 @@ export default function App() {
             {batchMode ? "完成" : "批量管理"}
           </button>
         </div>
-        {archiveUndo && <div className="archive-notice" role="status">
-          <span>{archiveUndo.archived ? "已取消归档" : archiveUndo.record ? "已归档记录" : "已归档连接"}</span>
-          <button type="button" className="text-button" disabled={locked}
-            onClick={() => archiveUndo.record ? archiveRecord(archiveUndo.record, archiveUndo.archived, true)
-              : archiveSession(archiveUndo.session, archiveUndo.archived, true)}>撤销</button>
-          <button type="button" className="icon" aria-label="关闭归档提示" onClick={() => setArchiveUndo(null)}><X size={12} /></button>
-        </div>}
+        <div className="history-region">
         <SessionList sessions={visibleSessions} selected={selected} batchMode={batchMode} archived={archivedView}
           viewPath={viewPath} state={state} locked={locked}
           onSelect={(path, checked) => setSelected((s) => {
@@ -677,6 +671,14 @@ export default function App() {
           onRename={setSessionDialog}
           onRenameRecord={setRecordDialog} onArchive={archiveSession} onArchiveRecord={archiveRecord}
           onOpenFolder={(path) => run("打开目录", () => api.OpenFolder(path))} />
+        {archiveUndo && <div className="archive-notice" role="status">
+          <span>{archiveUndo.archived ? "已取消归档" : archiveUndo.record ? "已归档记录" : "已归档连接"}</span>
+          <button type="button" className="text-button" disabled={locked}
+            onClick={() => archiveUndo.record ? archiveRecord(archiveUndo.record, archiveUndo.archived, true)
+              : archiveSession(archiveUndo.session, archiveUndo.archived, true)}>撤销</button>
+          <button type="button" className="icon" aria-label="关闭归档提示" onClick={() => setArchiveUndo(null)}><X size={12} /></button>
+        </div>}
+        </div>
         {batchMode && <div className="export-panel">
           <div className="batch-options">
             <label>

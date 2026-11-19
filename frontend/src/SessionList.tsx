@@ -8,8 +8,8 @@ type Menu = { anchor: HTMLElement; actions: Action[]; x: number; y: number };
 
 export const recordTitle = (title?: string) => title?.trim() || "未命名";
 export const sessionStamp = (s: string) => s ? new Date(s).toLocaleString("zh-CN", { hour12: false }) : "";
-const shortStamp = new Intl.DateTimeFormat("sv-SE", {
-  month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit",
+const shortStamp = new Intl.DateTimeFormat("zh-CN", {
+  month: "long", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
 });
 const shortTime = (s: Session) => !Number.isNaN(Date.parse(s.startedAt))
   ? shortStamp.format(new Date(s.startedAt)) : s.path.split(/[/\\]/).pop() || s.path;
@@ -140,8 +140,9 @@ export default function SessionList({ sessions, selected, batchMode, archived, v
               aria-label={`${short}，${count} 条记录${!open && (writing || capturing) ? "，写入中" : ""}`}
               onClick={() => setExpanded((prev) => ({ ...prev, [s.path]: !open }))}>
               {open ? <FolderOpen size={16} /> : <Folder size={16} />}
-              <span>{short}</span><small className="session-count" title={`${count} 条记录`}>{count} 条</small>
+              <span>{short}</span>
               {!open && (writing || capturing) && <Writing label="写入中" />}
+              <small className="session-count" title={`${count} 条记录`}>{count}</small>
             </button>
             {canArchiveConnection && <span className="archive-action" title={connected ? "断开连接后可归档" : archiveLabel}>
               <button type="button" className="icon" aria-label={`${archiveLabel} · ${short}`}
@@ -167,7 +168,11 @@ export default function SessionList({ sessions, selected, batchMode, archived, v
               const recordArchived = !!(s.archived || r.archived);
               const recordArchiveLabel = recordArchived ? "取消记录归档" : "归档记录";
               const archiveDisabled = active || !!s.archived;
-              return <div className={"history-row record-row" + (viewPath === r.path ? " active" : "")} key={r.path}
+              const status = [r.interrupted ? "中断" : !r.endedAt ? "抓取中" : "",
+                r.filterGaps ? "应用过滤有缺口" : ""].filter(Boolean).join(" · ");
+              const detail = [title, `时间：${sessionStamp(r.startedAt)}`, `应用：${r.package || "全部应用"}`,
+                ...(status ? [`状态：${status}`] : [])].join("\n");
+              return <div className={"history-row record-row" + (viewPath === r.path ? " active" : "")} key={r.path} title={detail}
                 {...context([openFolder(r.path), { label: "重命名记录", icon: <Pencil size={15} />,
                   run: () => onRenameRecord(r), disabled: state.capturing },
                   { label: recordArchiveLabel, icon: recordArchived ? <ArchiveRestore size={15} /> : <Archive size={15} />,
@@ -176,11 +181,10 @@ export default function SessionList({ sessions, selected, batchMode, archived, v
                   remove("删除此记录", () => onDeleteRecords([r.path]), state.capturing)])}>
                 {batchMode && <input type="checkbox" aria-label={"选择 " + title} checked={selected.has(r.path)} disabled={locked || active}
                   onChange={(e) => onSelect(r.path, e.target.checked)} />}
-                <button className="history-item" type="button" title={title}
+                <button className="history-item" type="button" title={detail} aria-label={title}
+                  aria-description={detail}
                   aria-current={viewPath === r.path ? "page" : undefined} onClick={() => onRecord(r)} disabled={locked || state.capturing}>
                   <strong>{title}</strong>
-                  <span>{sessionStamp(r.startedAt)}</span>
-                  <small>{r.interrupted ? "中断" : !r.endedAt ? "抓取中" : r.package || "全部应用"}{r.filterGaps ? " · 应用过滤有缺口" : ""}</small>
                   {active && !writing && <Writing label="抓取中" />}
                 </button>
                 <span className="archive-action" title={active ? "停止当前抓取后可归档" : s.archived ? "请先取消连接归档" : recordArchiveLabel}>
