@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import LogSplit from "./LogSplit";
+import Notification from "./Notification";
 import LogPane, { emptyPreview, trimPreview } from "./LogPane";
 import SessionList, { recordTitle as displayTitle } from "./SessionList";
 import SessionDialog from "./SessionDialog";
@@ -10,6 +11,7 @@ import {
   Usb,
   FolderOpen,
   RefreshCw,
+  Undo2,
   Crosshair,
   Play,
   Square,
@@ -19,7 +21,6 @@ import {
   Settings2,
   FileText,
   Check,
-  AlertCircle,
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
@@ -67,10 +68,10 @@ function loadLayout() {
       right: v.right !== false,
       mode: (["columns", "rows", "mcu", "android"].includes(v.mode)
         ? v.mode
-        : "columns") as LogLayout,
+        : "rows") as LogLayout,
     };
   } catch {
-    return { left: true, right: true, mode: "columns" as LogLayout };
+    return { left: true, right: true, mode: "rows" as LogLayout };
   }
 }
 export default function App() {
@@ -451,7 +452,7 @@ export default function App() {
       setSessions((items) => items.map((s) => s.path === session.path ? { ...s, archived } : s));
       setSelected((items) => new Set([...items].filter((path) => !session.records.some((r) => r.path === path))));
       setArchiveUndo(undo ? null : { session, archived: !archived });
-      setNotice(archived ? "已归档连接" : "已取消归档");
+      if (undo) setNotice(archived ? "已归档连接" : "已取消归档");
     });
   const archiveRecord = (record: RecordItem, archived: boolean, undo = false) =>
     run(archived ? "归档记录" : "取消归档", async () => {
@@ -460,7 +461,7 @@ export default function App() {
       setSessions((items) => items.map((s) => ({ ...s, records: s.records.map((r) => r.path === record.path ? { ...r, archived } : r) })));
       setSelected((items) => new Set([...items].filter((path) => path !== record.path)));
       setArchiveUndo(undo ? null : { record, archived: !archived });
-      setNotice(archived ? "已归档记录" : "已取消归档");
+      if (undo) setNotice(archived ? "已归档记录" : "已取消归档");
     });
   const disconnect = () =>
     run("断开连接", async () => {
@@ -591,11 +592,6 @@ export default function App() {
     });
   };
   const activeTitle = displayTitle(live ? view?.title : state.activeRecord?.title);
-  const historyHint = !recordLogs
-    ? `日志未加载，可重新点击${fullView ? "完整日志" : "记录"}重试`
-    : recordLogs.mcu.truncated || recordLogs.android.truncated
-      ? `仅预览日志末尾，全文请打开${fullView ? "完整日志" : "记录"}目录`
-      : null;
   const savingFullLogs = state.config.saveFullLogs !== false;
   const currentDevices = state.connected ? state.config : config;
   const singleSource = fullView ? fullView.full?.source : recordHistory ? view.source : currentDevices.serialPort
@@ -705,13 +701,6 @@ export default function App() {
           onRename={setSessionDialog}
           onRenameRecord={setRecordDialog} onArchive={archiveSession} onArchiveRecord={archiveRecord}
           onOpenFolder={(path) => run("打开目录", () => api.OpenFolder(path))} />
-        {archiveUndo && <div className="archive-notice" role="status">
-          <span>{archiveUndo.archived ? "已取消归档" : archiveUndo.record ? "已归档记录" : "已归档连接"}</span>
-          <button type="button" className="text-button" disabled={locked}
-            onClick={() => archiveUndo.record ? archiveRecord(archiveUndo.record, archiveUndo.archived, true)
-              : archiveSession(archiveUndo.session, archiveUndo.archived, true)}>撤销</button>
-          <button type="button" className="icon" aria-label="关闭归档提示" onClick={() => setArchiveUndo(null)}><X size={12} /></button>
-        </div>}
         </div>
         {batchMode && <div className="export-panel">
           <div className="batch-options">
@@ -777,8 +766,8 @@ export default function App() {
           {!singleSource && <div className="layout-switch" role="group" aria-label="日志布局">
             {(
               [
-                ["columns", "左右", Columns2],
                 ["rows", "上下", Rows2],
+                ["columns", "左右", Columns2],
                 ["mcu", "MCU", null],
                 ["android", "Android", null],
               ] as const
@@ -795,6 +784,14 @@ export default function App() {
             ))}
           </div>}
           <div className="grow" />
+          {history && <div className="history-context">
+            <span className="view-kind" title={fullView ? new Date(fullView.startedAt).toLocaleString("zh-CN", { hour12: false }) : displayTitle(view?.title)}>
+              {fullView ? "完整日志" : "历史日志"}
+            </span>
+          </div>}
+          {history && <button className="primary return-live" disabled={locked} onClick={prepareCapture}>
+            <Undo2 size={15} aria-hidden="true" />返回实时
+          </button>}
           {state.capturing && (
             <>
               <span className="capture-title" title={activeTitle}>
@@ -835,51 +832,6 @@ export default function App() {
             )}
           </button>
         </header>
-        {(error || state.error) && (
-          <div className="error-banner">
-            <AlertCircle size={16} />
-            <span>{error || state.error}</span>
-            {error && fallback && !state.connected && (
-              <button
-                className="secondary connection-fallback"
-                disabled={locked}
-                onClick={() => connect(fallback.source === "mcu"
-                  ? { ...config, androidSerial: "" }
-                  : { ...config, serialPort: "" })}
-              >
-                {fallback.source === "mcu" ? "仅连接串口" : "仅连接 Android"}
-              </button>
-            )}
-            {error && (
-              <button
-                className="icon"
-                aria-label="关闭提示"
-                onClick={() => setError("")}
-              >
-                ×
-              </button>
-            )}
-          </div>
-        )}
-        {state.filterWarning && (
-          <div className="preview-banner" title={state.filterWarning}>
-            <AlertCircle size={16} />
-            <span>
-              应用过滤暂不可用，正在重试。{savingFullLogs && "完整 Android 日志继续保存。"}
-            </span>
-          </div>
-        )}
-        {history && (
-          <div className="history-banner">
-            <div className="history-summary">
-              <span title={fullView ? new Date(fullView.startedAt).toLocaleString("zh-CN", { hour12: false }) : view?.title}>
-                {fullView ? <>完整日志 · <strong>{new Date(fullView.startedAt).toLocaleString("zh-CN", { hour12: false })}</strong></> : <>历史日志 · <strong>{displayTitle(view?.title)}</strong></>}
-              </span>
-              {historyHint && <small>{historyHint}</small>}
-            </div>
-            <button disabled={locked} onClick={prepareCapture}>返回实时</button>
-          </div>
-        )}
         <LogSplit mode={logLayout}>
           {singleSource !== "android" && <LogPane
             key={mcuKey}
@@ -914,9 +866,6 @@ export default function App() {
               : "未连接")}
           </span>
           <span className="live-label">{fullView ? "完整日志" : history ? "历史日志" : live ? "抓取预览" : "实时日志"}</span>
-          <span className="status-notice" title={notice}>
-            {notice}
-          </span>
           <div className="grow" />
           <span className="mono">
             {singleSource !== "android" && <>MCU {size(history ? recordLogs?.mcu.bytes || 0 : state.mcuBytes)}</>}
@@ -1389,6 +1338,27 @@ export default function App() {
           </section>
         </div>
       </aside>
+      <section className="notifications" aria-label="通知">
+        {(error || state.error) && <Notification key={`error:${error || state.error}`} kind="error" message={error || state.error}
+          onClose={() => setError("")}>
+          {error && fallback && !state.connected && <button className="secondary connection-fallback" disabled={locked}
+            onClick={() => connect(fallback.source === "mcu" ? { ...config, androidSerial: "" } : { ...config, serialPort: "" })}>
+            {fallback.source === "mcu" ? "仅连接串口" : "仅连接 Android"}
+          </button>}
+        </Notification>}
+        {state.filterWarning && <Notification key="filter-warning" kind="warning"
+          message={`应用过滤暂不可用，正在重试。${savingFullLogs ? "完整 Android 日志继续保存。" : ""}`}
+          details={state.filterWarning} />}
+        {notice && <Notification key={`notice:${notice}`} kind="success" message={notice} duration={3000}
+          onClose={() => setNotice("")} />}
+        {archiveUndo && <Notification key={`archive:${archiveUndo.record?.path ?? archiveUndo.session?.path}:${archiveUndo.archived}`}
+          kind="success" message={archiveUndo.archived ? "已取消归档" : archiveUndo.record ? "已归档记录" : "已归档连接"}
+          duration={8000} onClose={() => setArchiveUndo(null)}>
+          <button type="button" className="text-button" disabled={locked}
+            onClick={() => archiveUndo.record ? archiveRecord(archiveUndo.record, archiveUndo.archived, true)
+              : archiveSession(archiveUndo.session, archiveUndo.archived, true)}>撤销</button>
+        </Notification>}
+      </section>
       {baudRateDialog && <BaudRateDialog onCancel={() => setBaudRateDialog(false)} onSave={saveBaudRate} />}
       {sessionDialog && <SessionDialog renaming={sessionDialog}
         onCancel={() => setSessionDialog(null)}

@@ -256,9 +256,54 @@ try {
   assert.equal(await fullLogs.isChecked(), true, "legacy settings must default to enabled");
   await fullLogs.uncheck();
   await page.waitForFunction(() => window.calls.configSaves.at(-1)?.saveFullLogs === false);
+  const notificationLogBounds = await page.locator(".logs-grid").boundingBox();
   await page.evaluate(() => (window.calls.failConnect = true));
   await connect();
   await page.getByText("Error: 模拟连接失败", { exact: true }).waitFor();
+  assert.deepEqual(await page.locator(".logs-grid").boundingBox(), notificationLogBounds, "errors must not resize the log workspace");
+  const errorToast = page.locator(".notification.error");
+  assert.equal(await errorToast.getAttribute("role"), "alert");
+  await errorToast.getByRole("button", { name: "关闭通知" }).click();
+  assert.equal(await errorToast.count(), 0);
+  const warning = page.locator(".notification.warning");
+  await page.evaluate(() => window.foregroundState({ filterWarning: "模拟应用过滤失败" }));
+  await warning.waitFor();
+  const warningBox = await warning.boundingBox();
+  assert.deepEqual(await page.locator(".logs-grid").boundingBox(), notificationLogBounds);
+  await warning.getByRole("button", { name: "查看详情" }).click();
+  await warning.locator(".notification-details").getByText("模拟应用过滤失败", { exact: true }).waitFor();
+  await page.evaluate(() => window.foregroundState({ filterWarning: "模拟应用过滤重试失败" }));
+  assert.equal(await warning.count(), 1, "retry updates the existing warning");
+  await warning.locator(".notification-details").getByText("模拟应用过滤重试失败", { exact: true }).waitFor();
+  await warning.getByRole("button", { name: "关闭通知" }).click();
+  await page.evaluate(() => window.foregroundState({ filterWarning: "模拟应用过滤再次重试" }));
+  assert.equal(await warning.count(), 0, "dismissed warning does not return on every retry");
+  await page.evaluate(async () => {
+    window.foregroundState({ filterWarning: "" });
+    // Let React commit the recovery before emitting a separate new failure.
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
+  await page.evaluate(() => window.foregroundState({ filterWarning: "新一次过滤故障" }));
+  await warning.waitFor();
+  assert.deepEqual(await warning.boundingBox(), warningBox);
+  await page.evaluate(() => window.foregroundState({ filterWarning: "" }));
+  await warning.waitFor({ state: "hidden" });
+  const longError = "模拟持久错误详情。".repeat(80);
+  await page.evaluate((error) => window.foregroundState({ error }), longError);
+  await errorToast.waitFor();
+  await errorToast.getByRole("button", { name: "查看详情" }).click();
+  assert.equal(await errorToast.locator(".notification-details").textContent(), longError);
+  assert.deepEqual(await page.locator(".logs-grid").boundingBox(), notificationLogBounds);
+  await errorToast.getByRole("button", { name: "关闭通知" }).click();
+  await page.evaluate(() => window.foregroundState({ mcuBytes: 1 }));
+  assert.equal(await errorToast.count(), 0, "state refresh must not revive a dismissed persistent error");
+  await page.evaluate(() => window.foregroundState({ error: "" }));
+  if (process.env.TWINLOG_SCREENSHOTS) {
+    await page.evaluate(() => window.foregroundState({ error: "连接失败，请检查设备后重试。" }));
+    await errorToast.waitFor();
+    await page.screenshot({ path: "test-results/floating-notification.png" });
+    await page.evaluate(() => window.foregroundState({ error: "" }));
+  }
   assert.ok(await connection.isVisible());
   assert.equal(await page.evaluate(() => window.calls.start), 0);
   await page.evaluate(() => (window.calls.failConnect = false));
@@ -286,7 +331,9 @@ try {
   await page.getByRole("button", { name: "断开连接", exact: true }).click();
   await fullLogs.check();
   await page.waitForFunction(() => window.calls.configSaves.at(-1)?.saveFullLogs === true);
+  const liveWorkspaceBounds = await page.locator(".logs-grid").boundingBox();
   await page.locator(".history-row button").first().click();
+  assert.deepEqual(await page.locator(".logs-grid").boundingBox(), liveWorkspaceBounds, "history must not add a row above the logs");
   await newCapture.click();
   assert.ok(await capture.isVisible());
   await page.getByRole("tab", { name: "设备连接", exact: true }).click();
@@ -308,15 +355,21 @@ try {
   await titleEditDialog.getByRole("button", { name: "取消", exact: true }).click();
   await page.getByText("test/old MCU 历史内容", { exact: false }).waitFor();
   assert.ok(await page.getByText("test/old Android 历史内容", { exact: false }).isVisible());
-  const historyBanner = page.locator(".history-banner");
+  const historyBanner = page.locator(".workspace-toolbar");
+  assert.equal(await historyBanner.locator(".view-kind").textContent().then((text) => text.trim()), "历史日志");
+  assert.equal(await historyBanner.locator(".view-kind").getAttribute("title"), "旧记录");
+  assert.equal(await historyBanner.locator(".view-title").count(), 0);
   const returnToLive = historyBanner.getByRole("button", { name: "返回实时", exact: true });
   const assertReturnCentered = async () => {
     const banner = await historyBanner.boundingBox();
     const button = await returnToLive.boundingBox();
     assert.ok(banner && button);
     assert.ok(Math.abs((button.y - banner.y) - (banner.height - button.height) / 2) <= 1);
+    assert.ok(button.x >= banner.x && button.x + button.width <= banner.x + banner.width, "return to live stays inside the narrow toolbar");
   };
-  assert.equal(await historyBanner.locator("small").textContent(), "仅预览日志末尾，全文请打开记录目录");
+  assert.equal(await historyBanner.locator(".history-info").count(), 0);
+  assert.ok((await page.locator(".log-limit").first().getAttribute("title")).includes("全文请打开日志目录"));
+  assert.equal(await page.locator(".history-banner").count(), 0);
   const historyPanes = page.locator(".log-pane");
   assert.equal(await historyPanes.getByRole("button", { name: "清空预览" }).count(), 0);
   await historyPanes.nth(1).locator("pre").focus();
@@ -327,6 +380,25 @@ try {
   await historySearch.press("Escape");
   assert.equal(await historySearch.count(), 0);
   await assertReturnCentered();
+  await renameRecord("这是一条用于检查窄窗口布局的很长历史记录标题".repeat(5));
+  const historyToolbar = page.locator(".workspace-toolbar");
+  assert.equal(await historyToolbar.locator(".view-kind").getAttribute("title"), "这是一条用于检查窄窗口布局的很长历史记录标题".repeat(5));
+  assert.ok(await historyToolbar.evaluate((el) => el.scrollWidth <= el.clientWidth), "long history title must not overflow the toolbar");
+  await assertReturnCentered();
+  if (process.env.TWINLOG_SCREENSHOTS) {
+    await page.getByRole("button", { name: "上下", exact: true }).click();
+    await page.getByRole("button", { name: "收起记录栏", exact: true }).click();
+    await page.getByRole("button", { name: "收起操作栏", exact: true }).click();
+    assert.equal(await historyToolbar.locator(".view-title").count(), 0);
+    assert.equal(await historyToolbar.locator(".view-kind").getAttribute("title"), "这是一条用于检查窄窗口布局的很长历史记录标题".repeat(5));
+    await page.screenshot({ path: "test-results/history-workspace.png" });
+    await page.getByRole("button", { name: "展开记录栏", exact: true }).click();
+    await page.getByRole("button", { name: "展开操作栏", exact: true }).click();
+    await page.getByRole("button", { name: "左右", exact: true }).click();
+  }
+  await renameRecord("旧记录");
+  // Keep the later title-persistence assertions scoped to their own edits.
+  await page.evaluate(() => { window.calls.titleSaves.length = 0; });
   await page.evaluate(() => window.sendLogs());
   assert.ok(!(await page.locator(".log-pane pre").first().textContent()).includes("MCU 保留日志"));
   assert.equal(
@@ -464,6 +536,8 @@ try {
   await renameRecord("");
   await page.getByRole("button", { name: /导出所选/ }).click();
   await page.getByText("已导出：test/export.zip", { exact: true }).waitFor();
+  await page.mouse.move(0, 0);
+  await page.locator(".notification.success").waitFor({ state: "hidden", timeout: 5000 });
   assert.equal(await page.evaluate(() => window.calls.exported[0].find((r) => r.path === "test/new").title), "");
   await page.evaluate(() => (window.calls.failTitleSave = true));
   const failedRename = await renameRecord('退出前修改', true);
@@ -540,7 +614,7 @@ try {
   await page.evaluate(() => (window.calls.failRead = true));
   await stop.click();
   await page.getByText("Error: 模拟日志读取失败", { exact: true }).waitFor();
-  assert.equal(await historyBanner.locator("small").textContent(), "日志未加载，可重新点击记录重试");
+  assert.equal(await historyBanner.locator(".history-info").count(), 0);
   await assertReturnCentered();
   await page.evaluate(() => (window.calls.failRead = false));
   await page.locator(".history-item").filter({ hasText: "仅串口记录" }).click();
@@ -866,9 +940,8 @@ try {
   await firstRecord.getByRole('button', { name: '归档记录 · 连接测试', exact: true }).click();
   await historyPage.getByRole('status').getByText('已归档记录', { exact: true }).waitFor();
   assert.deepEqual(await historyPage.locator('.history-list').boundingBox(), listBounds, 'archive notice does not resize or move the list');
-  const noticeBounds = await historyPage.locator('.archive-notice').boundingBox();
-  const batchBounds = await batch.boundingBox();
-  assert.ok(noticeBounds.y + noticeBounds.height <= batchBounds.y, 'floating notice stays above batch actions');
+  const noticeBounds = await historyPage.locator('.notification.success').boundingBox();
+  assert.ok(noticeBounds.x + noticeBounds.width <= 1080 && noticeBounds.y + noticeBounds.height <= 640 - 30, 'floating notice stays inside the window above the status bar');
   assert.equal(await oldSession.locator('.record-row').count(), 1);
   assert.ok(await oldSession.locator('.full-row').isVisible());
   assert.equal(await historyPage.locator('.log-pane pre').textContent(), recordPreview);

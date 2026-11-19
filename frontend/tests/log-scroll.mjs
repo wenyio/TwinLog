@@ -40,11 +40,30 @@ try {
     });
     await page.goto(url);
     await page.waitForFunction(() => window.testReady?.());
+    const layoutButtons = page.getByRole("group", { name: "日志布局" });
+    assert.deepEqual(await layoutButtons.getByRole("button").allTextContents(), ["上下", "左右", "MCU", "Android"]);
+    assert.equal(await layoutButtons.getByRole("button", { name: "上下", exact: true }).getAttribute("aria-pressed"), "true");
+    if (height === 940) {
+      for (const saved of ["invalid json", JSON.stringify({ mode: "unknown", left: false, right: false })]) {
+        await page.evaluate((saved) => localStorage.setItem("twinlog.layout", saved), saved);
+        await page.reload();
+        await page.waitForFunction(() => window.testReady?.());
+        assert.equal(await layoutButtons.getByRole("button", { name: "上下", exact: true }).getAttribute("aria-pressed"), "true");
+      }
+      await page.evaluate(() => localStorage.removeItem("twinlog.layout"));
+      await page.reload();
+      await page.waitForFunction(() => window.testReady?.());
+    }
+    // Continue the existing scrolling and search coverage in its original layout.
+    await layoutButtons.getByRole("button", { name: "左右", exact: true }).click();
     const panes = page.locator(".log-pane");
     for (const [index, source] of ["mcu", "android"].entries()) {
       const pane = panes.nth(index), pre = pane.locator("pre");
+      const originalBounds = await pre.boundingBox();
       await page.evaluate((source) => window.testLogs(source, 0, 2200), source);
       await pre.getByText(source + " line 2199", { exact: false }).waitFor();
+      assert.deepEqual(await pre.boundingBox(), originalBounds, "truncation must not take up log space");
+      assert.equal(await pane.locator("footer").count(), 0);
       await page.waitForFunction((index) => {
         const el = document.querySelectorAll(".log-pane pre")[index];
         return el.scrollHeight > el.clientHeight && Math.abs(el.scrollHeight - el.clientHeight - el.scrollTop) < 2;

@@ -143,6 +143,7 @@ export default function LogPane({
         <span className={"source-dot " + source} />
         <strong>{source === "mcu" ? "MCU 串口" : "Android Logcat"}</strong>
         <div className="grow" />
+        {shownLines > 0 && <span className="log-limit" title={historical ? `仅显示末尾 ${shownLines} 行，全文请打开日志目录` : `仅显示末尾 ${shownLines} 行，清屏与暂停不影响保存`}>仅显示末尾 {shownLines} 行</span>}
         <button ref={findRef} className="icon" title="查找当前预览 (Ctrl+F)" aria-label="查找当前预览" onClick={openSearch}>
           <Search size={15} />
         </button>
@@ -193,7 +194,6 @@ export default function LogPane({
         </span>}
       </pre>
       </div>
-      {shownLines > 0 && <footer>仅显示末尾 {shownLines} 行</footer>}
     </section>
   );
 }
