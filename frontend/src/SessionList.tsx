@@ -131,6 +131,7 @@ export default function SessionList({ sessions, selected, batchMode, archived, v
         const archiveLabel = s.archived ? "取消归档" : "归档连接";
         const canArchiveConnection = s.managed && (!archived || !!s.archived);
         return <div key={s.path}>
+          <div className="session-header">
           <div className="session-row" {...context([openFolder(s.path), ...(s.managed ? [rename(s),
             ...(canArchiveConnection ? [{ label: archiveLabel, icon: s.archived ? <ArchiveRestore size={15} /> : <Archive size={15} />,
               run: () => onArchive(s, !s.archived), disabled: connected }] : []),
@@ -151,8 +152,7 @@ export default function SessionList({ sessions, selected, batchMode, archived, v
               </button>
             </span>}
           </div>
-          <div className="session-children" hidden={!open}>
-            {s.full && <div className={"history-row full-row" + (viewPath === s.full.path ? " active" : "")}
+            {s.full && <div hidden={!open} className={"history-row full-row" + (viewPath === s.full.path ? " active" : "")}
               {...context([openFolder(s.full.path), exportItem("导出完整日志", () => onExport([], [s.path]), connected),
                 remove("删除完整日志", () => onDeleteSession(s.path, true), connected)])}>
               <button className="history-item" type="button" onClick={() => onFull(s)} disabled={locked || state.capturing}
@@ -162,6 +162,8 @@ export default function SessionList({ sessions, selected, batchMode, archived, v
                 {writing ? <Writing label="写入中" /> : <small>{(s.full.bytes / 1048576).toFixed(1)} MB</small>}
               </button>
             </div>}
+          </div>
+          <div className="session-children" hidden={!open}>
             {s.records.map((r) => {
               const active = r.path === state.activeRecord?.path;
               const title = recordTitle(r.title);

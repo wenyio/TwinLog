@@ -257,6 +257,13 @@ label {
   line-height: 1.9;
   color: var(--text-muted);
 }
+.session-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface);
+}
+.session-header > .full-row { margin-left: 15px; }
 .session-row,
 .history-row {
   position: relative;

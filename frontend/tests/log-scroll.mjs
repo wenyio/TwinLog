@@ -186,6 +186,74 @@ try {
     await page.close();
     console.log("PASS: both panes scroll pause, return to latest/bottom, manual pause, eviction, clear and independence at height " + height);
   }
+  // Connection context and full-log entry stay reachable while browsing long groups.
+  const historyPage = await browser.newPage({ viewport: { width: 1080, height: 640 } });
+  await historyPage.addInitScript(() => {
+    const config = { outputDir: 'test' };
+    const sessions = Array.from({ length: 3 }, (_, group) => ({
+      path: `test/session${group}`, title: `连接 ${group}`, startedAt: '2026-11-19T06:00:00Z', managed: true,
+      full: group === 1 ? null : { path: `test/session${group}/full`, bytes: 1024, source: 'android' },
+      records: Array.from({ length: 35 }, (_, index) => ({
+        path: `test/session${group}/record${index}`, title: `记录 ${group}-${index}`, notes: '',
+        startedAt: '2026-11-19T06:00:00Z', endedAt: '2026-11-19T06:01:00Z', source: 'android',
+      })),
+    }));
+    window.go = { main: { App: {
+      GetConfig: async () => config,
+      GetState: async () => ({ connected: false, capturing: false, sessionDir: '', config }),
+      ListSessions: async () => sessions, ListPorts: async () => [], ListDevices: async () => [],
+      ReadFullLogs: async (path) => {
+        window.readFullPath = path;
+        return { mcu: { text: '', bytes: 0 }, android: { text: '完整日志内容', bytes: 18 } };
+      },
+    } } };
+  });
+  await historyPage.goto(url);
+  const groups = historyPage.locator('.session-group');
+  await groups.nth(2).waitFor();
+  await groups.nth(1).locator('.session-toggle').click();
+  await groups.nth(2).locator('.session-toggle').click();
+  const list = historyPage.locator('.history-list');
+  const scrollGroup = async (index) => {
+    await groups.nth(index).evaluate((el) => { el.closest('.history-list').scrollTop = el.offsetTop - el.closest('.history-list').offsetTop + 300; });
+    await historyPage.waitForFunction((index) => {
+      const list = document.querySelector('.history-list');
+      const header = list.querySelectorAll('.session-header')[index];
+      return Math.abs(header.getBoundingClientRect().top - list.getBoundingClientRect().top) < 1;
+    }, index);
+  };
+  for (const width of [1080, 1440]) {
+    await historyPage.setViewportSize({ width, height: 640 });
+    for (const index of [0, 1, 2, 1, 0]) {
+      await scrollGroup(index);
+      const group = groups.nth(index);
+      assert.ok(await group.locator('.session-toggle').isVisible());
+      assert.ok(await group.locator('.record-row').first().evaluate((el) =>
+        el.getBoundingClientRect().top < el.closest('.history-list').getBoundingClientRect().top));
+      assert.ok(await group.locator('.session-header').evaluate((el) => {
+        const box = el.getBoundingClientRect();
+        return el.contains(document.elementFromPoint(box.left + box.width / 2, box.bottom - 4));
+      }), 'scrolled records must stay behind the pinned header');
+      if (index !== 1) {
+        const row = await group.locator('.session-row').boundingBox();
+        const full = await group.locator('.full-row').boundingBox();
+        assert.equal(full.y, row.y + row.height, 'full logs stay immediately under connection');
+      } else {
+        assert.equal(await group.locator('.full-row').count(), 0);
+      }
+    }
+  }
+  await groups.first().locator('.full-row button').click();
+  await historyPage.waitForFunction(() => window.readFullPath === 'test/session0');
+  await groups.first().locator('.session-toggle').click();
+  assert.ok(await groups.first().locator('.full-row').isHidden());
+  assert.ok(await groups.first().locator('.session-children').isHidden());
+  await groups.first().locator('.session-toggle').click();
+  await scrollGroup(0);
+  assert.ok(await groups.first().locator('.full-row').isVisible());
+  await list.screenshot({ path: 'test-results/session-sticky-header.png' });
+  await historyPage.close();
+  console.log('PASS: pinned connection and full logs, group transitions in both directions, no-full group, collapse and full-log navigation');
 } finally {
   await browser?.close();
   server.kill();
