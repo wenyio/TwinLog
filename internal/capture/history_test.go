@@ -37,15 +37,16 @@ func TestExportNamesUseCurrentTitlesWithoutMovingRecords(t *testing.T) {
 		historyRecord(t, root, "first"),
 		historyRecord(t, root, "second"),
 		historyRecord(t, root, "third"),
+		historyRecord(t, root, "fourth"),
 	}
-	stamp := "2026-11-17T10:00:00.123+08:00"
-	titles := []string{"新/Title", "新?title", ""}
+	stamp := time.Date(2026, 11, 17, 10, 0, 0, 123000000, time.FixedZone("CST", 8*60*60))
+	titles := []string{"新/Title", "新?title", "", "新/Title"}
 	for i, path := range paths {
 		r, err := loadRecord(path)
 		if err != nil {
 			t.Fatal(err)
 		}
-		r.StartedAt = stamp
+		r.StartedAt = stamp.Add(time.Duration(i) * time.Millisecond).Format(time.RFC3339Nano)
 		if err := writeJSON(filepath.Join(path, "record.json"), r); err != nil {
 			t.Fatal(err)
 		}
@@ -54,7 +55,7 @@ func TestExportNamesUseCurrentTitlesWithoutMovingRecords(t *testing.T) {
 		}
 	}
 	dest := filepath.Join(root, "export.zip")
-	if err := m.Export(append(paths, paths[0]), dest, false); err != nil {
+	if err := m.ExportSelection(root, append(paths, paths[0]), nil, dest); err != nil {
 		t.Fatal(err)
 	}
 	z, err := zip.OpenReader(dest)
@@ -62,10 +63,10 @@ func TestExportNamesUseCurrentTitlesWithoutMovingRecords(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer z.Close()
-	if len(z.File) != 12 {
+	if len(z.File) != 16 {
 		t.Fatalf("unexpected number of ZIP entries: %d", len(z.File))
 	}
-	for i, dir := range []string{"20261117_100000_123_新_Title", "20261117_100000_123_新_title_1", "20261117_100000_123"} {
+	for i, dir := range []string{"20261117_100000_新_Title", "20261117_100000_新_title_1", "20261117_100000", "20261117_100000_新_Title_2"} {
 		p := "session/" + dir + "/"
 		for _, name := range []string{"mcu.log", "android.log", "notes.txt"} {
 			f, err := z.Open(p + name)

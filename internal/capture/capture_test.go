@@ -256,8 +256,13 @@ func TestCaptureWithoutFullLogs(t *testing.T) {
 	for _, f := range z.File {
 		entries[f.Name] = true
 	}
+	startedAt, err := time.Parse(time.RFC3339Nano, r.StartedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recordDir := startedAt.Format("20060102_150405") + "_capture only"
 	if !entries[filepath.Base(legacySession)+"/full/android.log"] ||
-		!entries[filepath.Base(m.sessionDir)+"/"+filepath.Base(r.Path)+"/android.log"] || len(entries) != 11 {
+		!entries[filepath.Base(m.sessionDir)+"/"+recordDir+"/android.log"] || len(entries) != 11 {
 		t.Fatalf("unexpected mixed export: %v", entries)
 	}
 }

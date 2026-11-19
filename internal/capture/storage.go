@@ -338,7 +338,10 @@ func (m *Manager) exportLogs(paths, fullDirs []string, destination string, inclu
 		session := filepath.Dir(p)
 		name := filepath.Base(p)
 		if startedAt, e := time.Parse(time.RFC3339Nano, r.StartedAt); e == nil {
-			name = captureDirName(startedAt, r.Title)
+			name = startedAt.Format("20060102_150405")
+			if title := strings.TrimSpace(r.Title); title != "" {
+				name += "_" + safeName(title)
+			}
 		}
 		base := filepath.Join(filepath.Base(session), name)
 		prefix := base
