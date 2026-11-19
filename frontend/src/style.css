@@ -184,13 +184,13 @@ label {
   overflow: auto;
   padding: 0 10px 56px;
 }
-.history-list::-webkit-scrollbar {
+:is(.history-list, .log-pane pre)::-webkit-scrollbar {
   width: 5px;
   height: 5px;
 }
-.history-list::-webkit-scrollbar-thumb { background: #dedede; }
-.history-list:is(:hover, :focus-within)::-webkit-scrollbar-thumb { background: var(--handle); }
-.history-list::-webkit-scrollbar-thumb:hover { background: #a8a8a8; }
+:is(.history-list, .log-pane pre)::-webkit-scrollbar-thumb { background: #dedede; }
+:is(.history-list, .log-pane pre):is(:hover, :focus-within)::-webkit-scrollbar-thumb { background: var(--handle); }
+:is(.history-list, .log-pane pre)::-webkit-scrollbar-thumb:hover { background: #a8a8a8; }
 .delete-records {
   color: #b75d50;
   font-size: 11px;
