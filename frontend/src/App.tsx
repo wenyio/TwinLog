@@ -12,7 +12,6 @@ import {
   RefreshCw,
   Crosshair,
   Play,
-  Pencil,
   Square,
   Download,
   Plus,
@@ -996,22 +995,30 @@ export default function App() {
                       : "已保存"
                     : "新建抓取 · 待开始"}
               </span>
-              {recordHistory && (
+              {recordHistory && <div className="capture-heading-actions">
                 <button
+                  type="button"
+                  className="text-button"
+                  disabled={locked}
+                  onClick={() => setRecordDialog(view)}
+                >
+                  重命名
+                </button>
+                <button
+                  type="button"
                   className="text-button"
                   onClick={() =>
                     run("打开目录", async () => api.OpenFolder(view.path))
                   }
                 >
                   <FolderOpen size={14} />
-                  打开记录目录
+                  打开目录
                 </button>
-              )}
+              </div>}
             </div>
             <div className="capture-controls">
               {recordHistory ? <div className="saved-record-title">
                 <strong title={title} onDoubleClick={() => { if (!locked) setRecordDialog(view); }}>{displayTitle(title)}</strong>
-                <button type="button" className="icon" title="重命名" aria-label="重命名" disabled={locked} onClick={() => setRecordDialog(view)}><Pencil size={14} /></button>
               </div> : <input
                 ref={titleInput}
                 className="title-input"

@@ -356,9 +356,17 @@ label {
 .new-capture-bar { display: flex; align-items: center; gap: 8px; }
 .new-capture-bar > button { flex: 1; }
 .new-capture-bar small { color: var(--text-secondary); }
-.saved-record-title { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.saved-record-title strong { flex: 1; min-width: 0; font-size: 14px; line-height: 22px; }
-.saved-record-title button { flex: none; width: 24px; height: 24px; padding: 0; }
+.saved-record-title { min-width: 0; }
+.saved-record-title strong {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 22px;
+}
 .row-popover {
   position: fixed;
   z-index: 30;
@@ -423,8 +431,7 @@ label {
   min-width: 0;
   font-weight: 500;
 }
-.record-row strong,
-.saved-record-title strong {
+.record-row strong {
   overflow: hidden;
   text-overflow: clip;
   -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent);
@@ -665,6 +672,12 @@ h1 {
 }
 .capture-heading .text-button {
   padding: 0;
+}
+.capture-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
 }
 .capture-controls {
   display: flex;
