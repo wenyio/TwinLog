@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { Archive, ArchiveRestore, Download, FileText, Folder, FolderOpen, LoaderCircle, Pencil, ScrollText, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, Check, Circle, Download, FileText, Folder, FolderOpen, LoaderCircle, Pencil, ScrollText, Trash2, X } from "lucide-react";
 import type { RecordItem, Session, State } from "./bridge";
 
 type Action = { label: string; icon: ReactNode; run: () => void; disabled?: boolean; danger?: boolean };
@@ -177,6 +177,7 @@ export default function SessionList({ sessions, selected, batchMode, archived, v
               const status = [r.interrupted ? "中断" : !r.endedAt ? "抓取中" : "",
                 r.filterGaps ? "应用过滤有缺口" : ""].filter(Boolean).join(" · ");
               const detail = [title, `时间：${sessionStamp(r.startedAt)}`, `应用：${r.package || "全部应用"}`,
+                `标记结果：${r.result || "待判定"}`,
                 ...(status ? [`状态：${status}`] : [])].join("\n");
               return <div className={"history-row record-row" + (viewPath === r.path ? " active" : "")} key={r.path} title={detail}
                 {...context([openFolder(r.path), { label: "重命名记录", icon: <Pencil size={15} />,
@@ -190,6 +191,9 @@ export default function SessionList({ sessions, selected, batchMode, archived, v
                 <button className="history-item" type="button" title={detail} aria-label={title}
                   aria-description={detail}
                   aria-current={viewPath === r.path ? "page" : undefined} onClick={() => onRecord(r)} disabled={locked || state.capturing}>
+                  <span className={"record-result-icon " + (r.result === "PASS" ? "pass" : r.result === "FAIL" ? "fail" : "pending")} aria-hidden="true">
+                    {r.result === "PASS" ? <Check size={14} /> : r.result === "FAIL" ? <X size={14} /> : <Circle size={8} />}
+                  </span>
                   <strong>{title}</strong>
                   {active && !writing && <Writing label="抓取中" />}
                 </button>

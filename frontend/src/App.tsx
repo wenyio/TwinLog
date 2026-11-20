@@ -38,6 +38,7 @@ import {
   Config,
   State,
   RecordItem,
+  RecordResult,
   RecordLogs,
   Session,
   LogSource,
@@ -194,6 +195,18 @@ export default function App() {
       setBusy("");
     }
   };
+  const markResult = (result: RecordResult) => run("保存标记结果", async () => {
+    const record = viewRef.current;
+    if (!record || record.path === stateRef.current.activeRecord?.path) return;
+    await flush();
+    await api.SaveResult(record.path, result);
+    setSessions((items) => items.map((s) => ({ ...s, records: s.records.map((r) =>
+      r.path === record.path ? { ...r, result } : r) })));
+    if (viewRef.current?.path === record.path) {
+      viewRef.current = { ...viewRef.current, result };
+      setView(viewRef.current);
+    }
+  });
   const flush = () => {
     if (timer.current) clearTimeout(timer.current);
     timer.current = null;
@@ -1065,6 +1078,23 @@ export default function App() {
               )}
             </div>}
           </section>
+          {recordHistory && <section className="record-result" aria-label="标记结果">
+            <header><strong>标记结果</strong><span aria-live="polite">{view.result || "待判定"}</span></header>
+            <div className="result-options" role="group" aria-label="选择标记结果">
+              <button type="button" className="result-option pass" aria-label="PASS"
+                aria-pressed={view.result === "PASS"} disabled={locked || state.capturing} onClick={() => markResult("PASS")}>
+                <Check size={19} />PASS{view.result === "PASS" && <small>已选</small>}
+              </button>
+              <button type="button" className="result-option fail" aria-label="FAIL"
+                aria-pressed={view.result === "FAIL"} disabled={locked || state.capturing} onClick={() => markResult("FAIL")}>
+                <X size={19} />FAIL{view.result === "FAIL" && <small>已选</small>}
+              </button>
+            </div>
+            <button type="button" className="result-pending" aria-label="待判定"
+              aria-pressed={!view.result} disabled={locked || state.capturing} onClick={() => markResult("")}>
+              <span aria-hidden="true">○</span>待判定
+            </button>
+          </section>}
           <section className="notes-card">
             <header>
               <FileText size={16} />

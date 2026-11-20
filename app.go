@@ -168,6 +168,7 @@ func (a *App) StartCapture(title, notes string) (capture.Record, error) {
 func (a *App) StopCapture() (capture.Record, error) { return a.manager.StopCapture() }
 func (a *App) SaveNotes(path, notes string) error   { return a.manager.SaveNotes(path, notes) }
 func (a *App) SaveTitle(path, title string) error   { return a.manager.SaveTitle(path, title) }
+func (a *App) SaveResult(path, result string) error { return a.manager.SaveResult(path, result) }
 func (a *App) ListSessions(root string) ([]capture.Session, error) {
 	return a.manager.ListSessions(root)
 }

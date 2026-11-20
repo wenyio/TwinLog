@@ -32,6 +32,8 @@ Windows 桌面工具，可单独或同时保存 MCU 串口和 Android logcat。G
 
 删除记录只回收所选记录及备注；“删除完整日志”只回收本次连接的 `full`；“删除连接”回收本次连接的整个目录，不影响其他连接。正在进行的连接及其完整日志不可删除，抓取期间不可删除记录。确认默认选“否”，若 Windows 提示无法回收、只能永久删除，可选择取消。旧版 `.twinlog-trash` 内的记录仍可按 `restore.json` 手动还原。
 
+停止抓取后，可在右侧“标记结果”选择 PASS、FAIL 或待判定，自动保存；旧记录默认待判定。左侧记录标题前用小空心圈、绿色对勾、红色叉号区分，悬停可查看完整结果。标记表达人工结论，与抓取中断、过滤缺口等采集状态独立。单条导出的默认 ZIP 文件名和包内记录目录会追加 `_PASS` 或 `_FAIL`，待判定不追加；批量导出的外层 ZIP 保持原命名，各记录目录保留自己的结果。标记保存在 `record.json`，不改写日志正文、日志文件名或本地记录目录，附带的完整日志不标记结果。
+
 目录：开启完整日志时，`连接时间/full` 下为所选路的 `mcu.log` 和/或 `android.log`。抓取目录以 `抓取时间_初始标题` 命名，初始标题为空时只用抓取时间，里面保存所选路的同名日志，以及 `notes.txt` 和 `record.json`。改名不移动或重命名磁盘目录。`session.json` 保存连接信息和可选名称。
 
 MCU 行首格式：[2026-11-17 11:56:10.745] 。空行同样有时间戳，跨块半行不重复加；时间是电脑收到行首数据的时间。同一接收块多行可同时间。串口正文按接收字节保存，预览按 UTF-8 解码，异常字符不改写文件。
@@ -77,7 +79,7 @@ Pop-Location
 ./build.ps1
 
 # 独立测试构建，不覆盖默认产物或正在运行的其他版本
-./build.ps1 -OutputName TwinLog_1.1.1_dev1.exe
+./build.ps1 -OutputName TwinLog_1.2.0_dev1.exe
 ```
 
 正式产物为 `build/bin/TwinLog.exe`。前端依赖以 `frontend/package-lock.json` 为准，使用 `npm.cmd ci` 安装；Go 和 Wails 依赖以 `go.mod`、`go.sum` 为准。官方 Go 源不通时，可对当前终端设置 `$env:GOPROXY = "https://goproxy.cn,direct"`。离线使用需提前准备 WebView2、ADB 及驱动。

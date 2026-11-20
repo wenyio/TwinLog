@@ -50,6 +50,7 @@ type Record struct {
 	Interrupted bool   `json:"interrupted"`
 	FilterGaps  bool   `json:"filterGaps,omitempty"`
 	Archived    bool   `json:"archived,omitempty"`
+	Result      string `json:"result,omitempty"` // Empty, PASS or FAIL; independent of capture status.
 }
 type State struct {
 	Connected         bool    `json:"connected"`

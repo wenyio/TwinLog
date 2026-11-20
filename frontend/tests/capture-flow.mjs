@@ -202,6 +202,10 @@ try {
             window.calls.titleSaves.push({ path, title });
             records.find((r) => r.path === path).title = title;
           },
+          SaveResult: async (path, result) => {
+            if (window.calls.failResultSave) throw Error("模拟标记保存失败");
+            records.find((r) => r.path === path).result = result;
+          },
           ExportLogs: async (paths) => {
             window.calls.exported.push(structuredClone(records.filter((r) => paths.includes(r.path))));
             return "test/export.zip";
@@ -412,6 +416,38 @@ try {
     await page.getByRole("button", { name: "左右", exact: true }).click();
   }
   await renameRecord("旧记录");
+  const resultPanel = capture.getByRole('region', { name: '标记结果', exact: true });
+  const passResult = resultPanel.getByRole('button', { name: 'PASS', exact: true });
+  const failResult = resultPanel.getByRole('button', { name: 'FAIL', exact: true });
+  const pendingResult = resultPanel.getByRole('button', { name: '待判定', exact: true });
+  assert.equal(await pendingResult.getAttribute('aria-pressed'), 'true');
+  const oldResultIcon = page.locator('.record-row').filter({ hasText: '旧记录' }).locator('.record-result-icon');
+  assert.equal(await oldResultIcon.locator('svg').getAttribute('width'), '8', 'pending circle stays small');
+  await notes.fill('标记前的备注');
+  await passResult.click();
+  await page.waitForFunction(() => document.querySelector('.result-option.pass')?.getAttribute('aria-pressed') === 'true');
+  assert.ok((await oldResultIcon.getAttribute('class')).includes('pass'));
+  assert.equal(await page.evaluate(() => window.calls.saves.at(-1).notes), '标记前的备注', 'marking flushes pending notes');
+  await failResult.click();
+  await page.waitForFunction(() => document.querySelector('.result-option.fail')?.getAttribute('aria-pressed') === 'true');
+  assert.ok((await oldResultIcon.getAttribute('class')).includes('fail'));
+  if (process.env.TWINLOG_RESULT_SCREENSHOT) await page.screenshot({ path: process.env.TWINLOG_RESULT_SCREENSHOT });
+  await page.evaluate(() => { window.calls.failResultSave = true; });
+  await passResult.click();
+  await page.getByText('Error: 模拟标记保存失败', { exact: true }).waitFor();
+  assert.equal(await failResult.getAttribute('aria-pressed'), 'true', 'failed write preserves last saved marker');
+  await page.locator('.notification.error').getByRole('button', { name: '关闭通知' }).click();
+  await page.evaluate(() => { window.calls.failResultSave = false; });
+  await newCapture.click();
+  assert.equal(await resultPanel.count(), 0, 'drafts have no result to mark');
+  await page.getByRole('button', { name: '旧记录', exact: true }).click();
+  assert.equal(await failResult.getAttribute('aria-pressed'), 'true', 'reopening keeps the result');
+  await pendingResult.click();
+  await page.waitForFunction(() => document.querySelector('.result-pending')?.getAttribute('aria-pressed') === 'true');
+  await notes.fill('原备注');
+  await notes.blur();
+  await page.waitForFunction(() => window.calls.saves.at(-1)?.notes === '原备注');
+  await page.evaluate(() => { window.calls.saves.length = 0; });
   // Keep the later title-persistence assertions scoped to their own edits.
   await page.evaluate(() => { window.calls.titleSaves.length = 0; });
   await page.evaluate(() => window.sendLogs());
@@ -480,6 +516,7 @@ try {
   await title.fill("抓取中修改");
   await notes.fill("抓取中补充");
   const stop = page.locator(".workspace-toolbar").getByRole("button", { name: "停止并保存", exact: true });
+  assert.equal(await resultPanel.count(), 0, 'active captures cannot receive a premature result');
   assert.ok(await stop.isVisible());
   await page.getByRole("tab", { name: "设备连接", exact: true }).click();
   assert.ok(await stop.isEnabled());

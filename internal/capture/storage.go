@@ -51,7 +51,8 @@ func writeRecord(path string, record Record) error {
 		Interrupted bool   `json:"interrupted"`
 		FilterGaps  bool   `json:"filterGaps,omitempty"`
 		Archived    bool   `json:"archived,omitempty"`
-	}{record.Title, record.StartedAt, record.EndedAt, record.Package, record.Source, record.Interrupted, record.FilterGaps, record.Archived})
+		Result      string `json:"result,omitempty"`
+	}{record.Title, record.StartedAt, record.EndedAt, record.Package, record.Source, record.Interrupted, record.FilterGaps, record.Archived, record.Result})
 }
 
 func (m *Manager) SetRecordArchived(root, path string, archived bool) error {
@@ -245,6 +246,41 @@ func (m *Manager) SaveTitle(path, title string) error {
 	return nil
 }
 
+// SaveResult only marks a finished record. It never changes log contents or directories.
+func (m *Manager) SaveResult(path, result string) error {
+	if result != "" && result != "PASS" && result != "FAIL" {
+		return fmt.Errorf("无效的标记结果")
+	}
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	path, err = filepath.EvalSymlinks(path)
+	if err != nil {
+		return err
+	}
+	m.op.Lock()
+	defer m.op.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.record != nil && sameResolvedPath(m.record.Path, path) {
+		return fmt.Errorf("请先停止当前抓取再标记结果")
+	}
+	r, err := loadRecord(path)
+	if err != nil {
+		return err
+	}
+	r.Result = result
+	return writeRecord(filepath.Join(path, "record.json"), r)
+}
+
+func resultSuffix(result string) string {
+	if result == "PASS" || result == "FAIL" {
+		return "_" + result
+	}
+	return ""
+}
+
 func fullLogsDisabled(session string) bool {
 	var meta struct {
 		Config struct {
@@ -267,7 +303,7 @@ func ExportFilename(paths []string, now time.Time) (string, error) {
 	}
 	title := strings.Trim(strings.TrimSpace(r.Title), " .")
 	if title == "" {
-		return fallback, nil
+		return strings.TrimSuffix(fallback, ".zip") + resultSuffix(r.Result) + ".zip", nil
 	}
 	if ext := filepath.Ext(title); strings.EqualFold(ext, ".zip") {
 		title = strings.TrimSuffix(title, ext)
@@ -278,7 +314,7 @@ func ExportFilename(paths []string, now time.Time) (string, error) {
 	if !filepath.IsLocal(strings.TrimRight(base, " ")) {
 		name = "_" + name
 	}
-	return name + ".zip", nil
+	return name + resultSuffix(r.Result) + ".zip", nil
 }
 
 func (m *Manager) Export(paths []string, destination string, includeFull bool) error {
@@ -343,6 +379,7 @@ func (m *Manager) exportLogs(paths, fullDirs []string, destination string, inclu
 				name += "_" + safeName(title)
 			}
 		}
+		name += resultSuffix(r.Result)
 		base := filepath.Join(filepath.Base(session), name)
 		prefix := base
 		for i := 1; usedPrefixes[strings.ToLower(prefix)]; i++ {

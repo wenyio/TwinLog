@@ -15,6 +15,7 @@ export interface Config {
   previewLines: number;
 }
 export type LogSource = "mcu" | "android";
+export type RecordResult = "" | "PASS" | "FAIL";
 
 export interface RecordItem {
   path: string;
@@ -27,6 +28,7 @@ export interface RecordItem {
   interrupted: boolean;
   filterGaps?: boolean;
   archived?: boolean;
+  result?: RecordResult;
 }
 export interface State {
   connected: boolean;
@@ -107,6 +109,7 @@ type Backend = {
   StopCapture(): Promise<RecordItem>;
   SaveNotes(path: string, notes: string): Promise<void>;
   SaveTitle(path: string, title: string): Promise<void>;
+  SaveResult(path: string, result: RecordResult): Promise<void>;
   ListSessions(root: string): Promise<Session[]>;
   SaveSessionTitle(path: string, title: string): Promise<void>;
   SetSessionArchived(path: string, archived: boolean): Promise<void>;
