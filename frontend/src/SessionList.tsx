@@ -83,20 +83,24 @@ export default function SessionList({ sessions, selected, batchMode, archived, v
     const focusOutside = (event: FocusEvent) => {
       if (!panel.contains(event.target as Node) && !menu.anchor.contains(event.target as Node)) close();
     };
+    const scrollAncestor = (event: Event) => {
+      // Only scrolling an ancestor can move the row away from its menu.
+      if (event.target instanceof Node && event.target.contains(menu.anchor)) close();
+    };
     window.addEventListener("pointerdown", outside);
     window.addEventListener("keydown", escape);
     window.addEventListener("focusin", focusOutside);
     window.addEventListener("resize", close);
-    window.addEventListener("scroll", close, true);
+    window.addEventListener("scroll", scrollAncestor, true);
     return () => {
       window.removeEventListener("pointerdown", outside);
       window.removeEventListener("keydown", escape);
       window.removeEventListener("focusin", focusOutside);
       window.removeEventListener("resize", close);
-      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("scroll", scrollAncestor, true);
     };
   }, [menu, locked]);
-  useEffect(() => { setMenu(null); }, [sessions, state.capturing, state.connected]);
+  useEffect(() => { setMenu(null); }, [sessions, state.capturing, state.connected, state.sessionDir, state.activeRecord?.path]);
 
   const context = (actions: Action[]) => ({
     onContextMenu: (event: React.MouseEvent<HTMLDivElement>) => {

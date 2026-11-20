@@ -737,6 +737,9 @@ try {
     const state = { connected: true, capturing: false, sessionDir: "test/live", activeRecord: null, config, error: "", mcuBytes: 0, androidBytes: 0 };
     window.emitHistoryEvent = (name, data) => handlers[name]?.forEach((fn) => fn(data));
     window.setCapturing = (capturing) => window.emitHistoryEvent("state", { ...state, capturing });
+    window.pulseHistoryState = (next) => window.emitHistoryEvent("state", structuredClone({
+      ...state, activeRecord: record("test/live/capture", "采集中"), ...next,
+    }));
     window.go = { main: { App: {
       GetConfig: async () => config,
       GetState: async () => state,
@@ -862,6 +865,42 @@ try {
     source: "android", text: Array.from({ length: 200 }, (_, i) => "实时 Android " + i + "\n").join(""),
   }));
   await historyPage.getByText(/实时 Android 199/).waitFor();
+  // A menu survives capture pulses and log auto-scroll, but still closes when
+  // its own list scrolls or capture permissions change.
+  const rowMenu = historyPage.getByRole("menu", { name: "行操作" });
+  const settleMenu = () => historyPage.evaluate(() => new Promise((resolve) =>
+    requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await historyPage.evaluate(() => window.pulseHistoryState({ capturing: true }));
+  await showMenu(activeSession.locator(".session-row"));
+  await rowMenu.waitFor();
+  for (let i = 0; i < 3; i++) {
+    await historyPage.evaluate((androidBytes) => window.pulseHistoryState({ capturing: true, androidBytes }), i * 100);
+    await settleMenu();
+    assert.ok(await rowMenu.isVisible(), "capture state pulses keep the menu open");
+  }
+  const beforeAutoScroll = await liveLog.evaluate((el) => el.scrollTop);
+  await historyPage.evaluate(() => window.emitHistoryEvent("logs", {
+    source: "android", text: Array.from({ length: 20 }, (_, i) => "菜单期间日志 " + i + "\n").join(""),
+  }));
+  await historyPage.getByText(/菜单期间日志 19/).waitFor();
+  await settleMenu();
+  assert.ok(await liveLog.evaluate((el) => el.scrollTop) > beforeAutoScroll, "new logs auto-scroll while the menu is open");
+  assert.ok(await rowMenu.isVisible(), "log auto-scroll keeps the menu open");
+  await historyPage.keyboard.press("Escape");
+  assert.ok(await rowMenu.isHidden(), "Escape still closes the menu");
+  const historyList = historyPage.locator(".history-list");
+  await historyList.evaluate((el) => { el.style.maxHeight = "60px"; });
+  await showMenu(activeSession.locator(".session-row"));
+  await rowMenu.waitFor();
+  await historyList.evaluate((el) => { el.scrollTop = 10; });
+  await rowMenu.waitFor({ state: "hidden" });
+  assert.ok(await historyList.evaluate((el) => el.scrollTop > 0), "the row list actually scrolled");
+  await historyList.evaluate((el) => { el.style.maxHeight = ""; el.scrollTop = 0; });
+  await showMenu(activeSession.locator(".session-row"));
+  await rowMenu.waitFor();
+  await historyPage.evaluate(() => window.setCapturing(false));
+  await rowMenu.waitFor({ state: "hidden" });
+  console.log("PASS: capture pulses and log auto-scroll preserve row menus; list scrolling, Escape and capture changes close them");
   await liveLog.evaluate((el) => { el.scrollTop = 200; });
   await latest.waitFor();
   const frozen = await liveLog.textContent();

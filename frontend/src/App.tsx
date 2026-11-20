@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import LogSplit from "./LogSplit";
 import Notification from "./Notification";
 import LogPane, { emptyPreview, trimPreview } from "./LogPane";
@@ -627,12 +627,12 @@ export default function App() {
     ? `${currentDevices.serialPort} + ${currentDevices.androidSerial}`
     : currentDevices.serialPort ? `仅串口 · ${currentDevices.serialPort}`
     : currentDevices.androidSerial ? `仅 Android · ${currentDevices.androidSerial}` : "未选择设备";
-  const visibleSessions = sessions.flatMap((s) => {
+  const visibleSessions = useMemo(() => sessions.flatMap((s) => {
     if (s.archived) return archivedView ? [s] : [];
     const records = s.records.filter((r) => !!r.archived === archivedView);
     if (archivedView) return records.length ? [{ ...s, records, full: null }] : [];
     return [{ ...s, records }];
-  });
+  }), [sessions, archivedView]);
   const viewedArchived = sessions.some((s) => (s.archived && s.full?.path === viewPath) || s.records.some((r) => r.path === viewPath && (s.archived || r.archived)));
   const selectable = visibleSessions.flatMap((s) => s.records).filter((r) => r.path !== state.activeRecord?.path);
   const selectedPaths = selectable.filter((r) => selected.has(r.path)).map((r) => r.path);
