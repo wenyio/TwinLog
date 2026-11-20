@@ -87,6 +87,10 @@ type Manager struct {
 	sessionDir                               string
 	lastError                                string
 	trackerError                             string
+	trackerSince, trackerLastSuccess         time.Time
+	trackerFailures                          int
+	trackerRecoveredAt                       string
+	processQuery                             processQuery
 	record                                   *Record
 	mcu, android, capMCU, capAndroid         *logFile
 	port                                     serial.Port
@@ -113,9 +117,15 @@ func (m *Manager) stateLocked() State {
 				s.FilterStatus = fmt.Sprintf("应用进程过滤 · %d 个进程", len(m.filter.pids))
 			}
 			if m.connected && m.trackerError != "" {
-				s.FilterStatus = "应用过滤暂不可用，正在重试"
-				s.FilterWarning = m.trackerError
+				s.FilterStatus = "应用进程查询失败，正在重试"
+				lastSuccess := "尚未成功"
+				if !m.trackerLastSuccess.IsZero() {
+					lastSuccess = m.trackerLastSuccess.Format("2006-01-02 15:04:05")
+				}
+				s.FilterWarning = fmt.Sprintf("已持续 %d 秒；最近成功：%s；连续失败 %d 次；重试间隔 %s。\n%s", int(time.Since(m.trackerSince).Seconds()), lastSuccess, m.trackerFailures, processQueryDelay(m.trackerFailures), m.trackerError)
+				s.FilterFailureAt = m.trackerSince.Format(time.RFC3339Nano)
 			}
+			s.FilterRecoveredAt = m.trackerRecoveredAt
 		} else {
 			s.FilterStatus = "应用 UID 过滤"
 		}
@@ -237,7 +247,7 @@ func (m *Manager) connect(c Config, openPort func(Config) (serial.Port, error)) 
 			return fmt.Errorf("Android 连接失败：%w", e)
 		}
 		if identity.shared {
-			pids, systemPID, e = packageSnapshot(context.Background(), c.ADBPath, c.AndroidSerial, c.Package)
+			pids, systemPID, e = m.processQuery.snapshot(context.Background(), c.ADBPath, c.AndroidSerial, c.Package)
 			if e != nil {
 				trackerWarning = e.Error()
 				pids = map[string]bool{}
@@ -314,7 +324,7 @@ func (m *Manager) connect(c Config, openPort func(Config) (serial.Port, error)) 
 	m.config = c
 	m.sessionDir = dir
 	m.lastError = ""
-	m.trackerError = trackerWarning
+	m.resetTrackerLocked(trackerWarning, identity.shared)
 	m.port = port
 	m.cmd = cmd
 	m.cancel = cancel
@@ -331,9 +341,6 @@ func (m *Manager) connect(c Config, openPort func(Config) (serial.Port, error)) 
 	m.previewAndroid = nil
 	m.mcuBytes = 0
 	m.androidBytes = 0
-	if trackerWarning != "" {
-		m.recordFilterEventLocked("unavailable", trackerWarning)
-	}
 	m.mu.Unlock()
 	if port != nil {
 		m.wg.Add(1)
@@ -590,7 +597,7 @@ func (m *Manager) SetPackage(pkg string) error {
 			return e
 		}
 		if identity.shared {
-			pids, systemPID, e = packageSnapshot(context.Background(), c.ADBPath, c.AndroidSerial, pkg)
+			pids, systemPID, e = m.processQuery.snapshot(context.Background(), c.ADBPath, c.AndroidSerial, pkg)
 			if e != nil {
 				trackerWarning = e.Error()
 				pids = map[string]bool{}
@@ -599,15 +606,12 @@ func (m *Manager) SetPackage(pkg string) error {
 	}
 	m.mu.Lock()
 	m.config.Package = pkg
-	m.trackerError = trackerWarning
+	m.resetTrackerLocked(trackerWarning, identity.shared)
 	m.filter.SetUID(identity.uid)
 	if identity.shared {
 		m.filter.SetPIDs(identity.uid, pids)
 		m.filter.packageName = pkg
 		m.filter.systemPID = systemPID
-	}
-	if trackerWarning != "" {
-		m.recordFilterEventLocked("unavailable", trackerWarning)
 	}
 	m.previewAndroid = nil
 	m.mu.Unlock()

@@ -288,6 +288,21 @@ try {
   assert.deepEqual(await warning.boundingBox(), warningBox);
   await page.evaluate(() => window.foregroundState({ filterWarning: "" }));
   await warning.waitFor({ state: "hidden" });
+  await page.evaluate(() => window.foregroundState({
+    connected: true, filterWarning: "已持续 12 秒；最近成功：09:25:00；连续失败 2 次；重试间隔 4s。", filterFailureAt: "failure-1",
+  }));
+  await warning.getByText(/应用预览和抓取可能存在缺口/).waitFor();
+  assert.ok(!(await warning.textContent()).includes("完整 Android 日志继续保存"), "disabled full logs must not promise preservation");
+  await warning.getByRole("button", { name: "查看详情" }).click();
+  await warning.locator(".notification-details").getByText(/最近成功：09:25:00/).waitFor();
+  await warning.getByRole("button", { name: "关闭通知" }).click();
+  await page.evaluate(() => window.foregroundState({ filterWarning: "", filterFailureAt: "", filterRecoveredAt: "recovery-1" }));
+  await warning.getByText(/应用过滤已恢复.*未自动补回/).waitFor();
+  await warning.getByRole("button", { name: "关闭通知" }).click();
+  await page.evaluate(() => window.foregroundState({ filterWarning: "新一轮查询超时", filterFailureAt: "failure-2", filterRecoveredAt: "" }));
+  await warning.getByText(/应用进程查询失败/).waitFor();
+  await page.evaluate(() => window.foregroundState({ connected: false, filterWarning: "", filterFailureAt: "" }));
+  await warning.waitFor({ state: "hidden" });
   const longError = "模拟持久错误详情。".repeat(80);
   await page.evaluate((error) => window.foregroundState({ error }), longError);
   await errorToast.waitFor();

@@ -37,6 +37,8 @@ export interface State {
   error: string;
   filterStatus?: string;
   filterWarning?: string;
+  filterFailureAt?: string;
+  filterRecoveredAt?: string;
   mcuBytes: number;
   androidBytes: number;
 }

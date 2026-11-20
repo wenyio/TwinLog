@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import LogSplit from "./LogSplit";
 import Notification from "./Notification";
+import FilterNotification from "./FilterNotification";
 import LogPane, { emptyPreview, trimPreview } from "./LogPane";
 import SessionList, { recordTitle as displayTitle } from "./SessionList";
 import SessionDialog from "./SessionDialog";
@@ -1342,9 +1343,7 @@ export default function App() {
             {fallback.source === "mcu" ? "仅连接串口" : "仅连接 Android"}
           </button>}
         </Notification>}
-        {state.filterWarning && <Notification key="filter-warning" kind="warning"
-          message={`应用过滤暂不可用，正在重试。${savingFullLogs ? "完整 Android 日志继续保存。" : ""}`}
-          details={state.filterWarning} />}
+        <FilterNotification state={state} savingFullLogs={savingFullLogs} />
         {notice && <Notification key={`notice:${notice}`} kind="success" message={notice} duration={3000}
           onClose={() => setNotice("")} />}
         {archiveUndo && <Notification key={`archive:${archiveUndo.record?.path ?? archiveUndo.session?.path}:${archiveUndo.archived}`}
