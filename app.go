@@ -25,6 +25,8 @@ type App struct {
 	awaitingNotes bool
 	closeRequest  uint64
 	closeAllowed  bool
+	windowRestore *windowBounds
+	windowMu      sync.Mutex
 }
 
 func NewApp() *App {

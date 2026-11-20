@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import LogSplit from "./LogSplit";
+import WindowFrame, { WindowResizeGrip } from "./WindowFrame";
 import Notification from "./Notification";
 import FilterNotification from "./FilterNotification";
 import LogPane, { emptyPreview, trimPreview } from "./LogPane";
@@ -77,6 +78,7 @@ function loadLayout() {
   }
 }
 export default function App() {
+  const [mini, setMini] = useState(false);
   const [operationsTab, setOperationsTab] = useState<"capture" | "connection">(
     "connection",
   );
@@ -629,14 +631,14 @@ export default function App() {
   }, [mcuKey, androidKey]);
   useEffect(() => {
     const find = (event: KeyboardEvent) => {
-      if (sessionDialog || recordDialog || baudRateDialog || !event.ctrlKey || event.altKey || event.metaKey || event.shiftKey || event.key.toLowerCase() !== "f") return;
+      if (mini || sessionDialog || recordDialog || baudRateDialog || !event.ctrlKey || event.altKey || event.metaKey || event.shiftKey || event.key.toLowerCase() !== "f") return;
       event.preventDefault();
       const source = logLayout === "mcu" || logLayout === "android" ? logLayout : lastPane.current;
       (source === "mcu" ? mcuFind : androidFind).current?.click();
     };
     window.addEventListener("keydown", find, true);
     return () => window.removeEventListener("keydown", find, true);
-  }, [logLayout, sessionDialog, recordDialog, baudRateDialog]);
+  }, [mini, logLayout, sessionDialog, recordDialog, baudRateDialog]);
   const connectionSummary = currentDevices.serialPort && currentDevices.androidSerial
     ? `${currentDevices.serialPort} + ${currentDevices.androidSerial}`
     : currentDevices.serialPort ? `仅串口 · ${currentDevices.serialPort}`
@@ -660,6 +662,9 @@ export default function App() {
     if (selectAll.current) selectAll.current.indeterminate = selectedCount > 0 && !allSelected;
   }, [selectedCount, allSelected, batchMode]);
   return (
+    <WindowFrame blocked={locked || !!sessionDialog || !!recordDialog || baudRateDialog} onError={setError}
+      beforeToggle={async () => { await flush(); }}
+      onModeChange={setMini}>
     <div className="app-shell">
       <aside className="sidebar" hidden={!layout.left}>
         <div className="brand">
@@ -884,7 +889,7 @@ export default function App() {
           </span>
         </footer>
       </main>
-      <aside className="operations" hidden={!layout.right}>
+      <aside className="operations" hidden={!layout.right && !mini}>
         <header className="operations-heading">
           <div className="operations-tabs" role="tablist" aria-label="操作面板">
             {(["capture", "connection"] as const).map((tab) => (
@@ -927,6 +932,10 @@ export default function App() {
             ))}
           </div>
         </header>
+        {mini && <div className="mini-status" role="status">
+          <span title={connectionSummary}>{state.connected ? connectionSummary : "未连接"}</span>
+          <span>{state.connected ? savingFullLogs ? "全量记录中" : "未保存完整日志" : "请连接设备"}</span>
+        </div>}
         <div
           className="operations-body"
           role="tabpanel"
@@ -934,6 +943,9 @@ export default function App() {
           aria-labelledby="operations-tab-capture"
           hidden={operationsTab !== "capture"}
         >
+          {mini && state.capturing && <button className="stop mini-stop" disabled={locked} onClick={stop}>
+            <Square size={13} />停止并保存
+          </button>}
           {!state.capturing && <div className="new-capture-bar">
             <button type="button" className="secondary" disabled={locked} onClick={prepareCapture}>
               <Plus size={16} />新建抓取
@@ -1121,6 +1133,7 @@ export default function App() {
               onChange={(e) => updateField("notes", e.target.value)}
               onBlur={() => flush().catch((e) => setError(String(e)))}
             />
+            <WindowResizeGrip />
           </section>
           </>}
         </div>
@@ -1391,5 +1404,6 @@ export default function App() {
       {recordDialog && <SessionDialog renaming={recordDialog} kind="record"
         onCancel={() => setRecordDialog(null)} onSubmit={(title) => renameRecord(recordDialog, title)} />}
     </div>
+    </WindowFrame>
   );
 }

@@ -182,7 +182,7 @@ export default function LogPane({
         </div>
       </div>}
       <pre ref={pre} tabIndex={0} onScroll={(event) => {
-        if (historical || !visible || pause?.reason === "manual") return;
+        if (historical || !visible || !event.currentTarget.clientHeight || pause?.reason === "manual") return;
         const { scrollHeight, scrollTop, clientHeight } = event.currentTarget;
         if (scrollHeight <= clientHeight) return;
         const atBottom = scrollHeight - clientHeight - scrollTop <= 2;

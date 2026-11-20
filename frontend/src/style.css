@@ -89,10 +89,45 @@ label {
 }
 .app-shell {
   display: flex;
-  height: 100vh;
+  flex: 1;
   min-height: 0;
   overflow: hidden;
 }
+
+/* Both modes keep the same mounted workspace and capture form. */
+.desktop-frame { height: 100vh; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+.window-titlebar { height: 32px; flex: 0 0 32px; display: flex; background: #edf3f8; border-bottom: 1px solid var(--border); user-select: none; }
+.window-drag-region { --wails-draggable: drag; flex: 1; min-width: 0; display: flex; align-items: center; padding-left: 12px; font-size: 11px; }
+.window-drag-region span { --wails-draggable: drag; }
+.window-buttons { --wails-draggable: no-drag; display: flex; }
+.window-buttons button { --wails-draggable: no-drag; width: 38px; padding: 0; border: 0; border-radius: 0; flex: none; }
+.window-buttons button svg { pointer-events: none; }
+.window-buttons button:hover:not(:disabled), .window-buttons button[aria-pressed="true"] { background: #dbe3ec; filter: none; }
+.window-buttons .window-close:hover { background: #c42b1c; color: white; }
+.mini-window .window-buttons button { width: 30px; }
+.mini-window .app-shell > .sidebar, .mini-window .app-shell > main { display: none; }
+.mini-window .operations { width: 100%; border-left: 0; }
+.mini-window .operations-heading { height: 40px; padding: 0 12px; }
+.mini-window .operations-tabs { gap: 14px; }
+.mini-status { display: flex; justify-content: space-between; gap: 8px; flex: none; padding: 6px 12px; border-bottom: 1px solid var(--divider); font-size: 10px; color: var(--text-secondary); }
+.mini-status span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mini-status span:last-child { flex: none; }
+.mini-window .operations-body { padding: 12px; gap: 12px; }
+.mini-window .operations-body[role="tabpanel"] .notes-card { min-height: 100px; position: relative; }
+.mini-window .notes-card header { margin-bottom: 6px; }
+.mini-window .notes-card textarea { min-height: 72px; resize: none; padding-bottom: 16px; }
+.mini-window .title-input { height: 38px; min-height: 38px; flex-basis: 38px; padding: 7px 10px; }
+.mini-window .capture-heading { gap: 5px; }
+.mini-window .capture-heading-actions { gap: 8px; }
+.mini-window .capture-controls { gap: 8px; }
+.mini-window .app-select { margin-top: 10px; gap: 5px; }
+.mini-window .record-result { padding-top: 10px; gap: 7px; }
+.mini-window .result-option { min-height: 38px; }
+.mini-window .result-pending { min-height: 28px; }
+.mini-window .mini-stop { width: 100%; flex: none; }
+.mini-window .new-capture-bar button { height: 34px; }
+.mini-window .notifications { bottom: 12px; right: 12px; max-height: calc(100vh - 82px); }
+.mini-resize { position: absolute; bottom: 1px; right: 1px; width: 18px; height: 18px; padding: 0; border: 0; cursor: nwse-resize; touch-action: none; background: repeating-linear-gradient(135deg, transparent 0 3px, var(--text-muted) 3px 4px, transparent 4px 6px); clip-path: polygon(100% 20%, 100% 100%, 20% 100%); z-index: 5; }
 .sidebar {
   min-height: 0;
   flex-shrink: 0;

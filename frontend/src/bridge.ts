@@ -92,6 +92,7 @@ export const defaults: Config = {
   previewLines: 2000,
 };
 type Backend = {
+  SetCompactWindow(compact: boolean, width: number, height: number, pinned: boolean): Promise<void>;
   ConfirmClose(ok: boolean): Promise<void>;
   GetConfig(): Promise<Config>;
   SaveConfig(c: Config): Promise<void>;
@@ -126,6 +127,18 @@ declare global {
     go?: { main: { App: Backend } };
     runtime?: {
       EventsOn(name: string, fn: (payload: any) => void): () => void;
+      WindowSetAlwaysOnTop?(value: boolean): void;
+      WindowGetSize?(): Promise<{ w: number; h: number }>;
+      WindowGetPosition?(): Promise<{ x: number; y: number }>;
+      WindowIsMaximised?(): Promise<boolean>;
+      WindowSetSize?(width: number, height: number): void;
+      WindowSetMinSize?(width: number, height: number): void;
+      WindowSetPosition?(x: number, y: number): void;
+      WindowMaximise?(): void;
+      WindowUnmaximise?(): void;
+      WindowToggleMaximise?(): void;
+      WindowMinimise?(): void;
+      Quit?(): void;
     };
   }
 }

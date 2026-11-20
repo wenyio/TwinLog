@@ -21,7 +21,7 @@ func main() {
 		// Keep the standard executable's existing profile even for renamed builds.
 		windowOptions.WebviewUserDataPath = filepath.Join(root, "TwinLog.exe")
 	}
-	err := wails.Run(&options.App{Title: "TwinLog · 双路日志助手", Width: 1440, Height: 780, MinWidth: 1080, MinHeight: 640,
+	err := wails.Run(&options.App{Title: "TwinLog · 双路日志助手", Width: 1440, Height: 780, MinWidth: 1080, MinHeight: 640, Frameless: true,
 		AssetServer: &assetserver.Options{Assets: assets}, BackgroundColour: &options.RGBA{R: 245, G: 247, B: 250, A: 255},
 		OnStartup: app.startup, OnBeforeClose: app.beforeClose, OnShutdown: app.shutdown, Bind: []interface{}{app}, Windows: windowOptions,
 	})
