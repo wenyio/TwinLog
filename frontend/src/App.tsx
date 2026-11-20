@@ -591,7 +591,6 @@ export default function App() {
       setNotice(`已选择前台应用：${pkg}`);
     });
   };
-  const activeTitle = displayTitle(live ? view?.title : state.activeRecord?.title);
   const savingFullLogs = state.config.saveFullLogs !== false;
   const currentDevices = state.connected ? state.config : config;
   const singleSource = fullView ? fullView.full?.source : recordHistory ? view.source : currentDevices.serialPort
@@ -794,9 +793,6 @@ export default function App() {
           </button>}
           {state.capturing && (
             <>
-              <span className="capture-title" title={activeTitle}>
-                {activeTitle}
-              </span>
               <span className="recording">
                 <i />
                 抓取中

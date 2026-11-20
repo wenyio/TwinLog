@@ -1035,14 +1035,6 @@ pre {
   color: var(--text);
   box-shadow: 0 1px 3px var(--shadow);
 }
-.capture-title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  min-width: 0;
-  max-width: 220px;
-}
 .workspace-toolbar .recording,
 .workspace-toolbar .stop {
   flex-shrink: 0;
@@ -1268,9 +1260,6 @@ pre {
   .layout-switch button {
     padding: 0 7px;
   }
-  .capture-title {
-    max-width: 90px;
-  }
   .live-label {
     display: none;
   }
@@ -1279,5 +1268,4 @@ pre {
 @container (max-width: 650px) {
   .layout-switch button { padding-inline: 5px; gap: 3px; }
   .layout-switch svg { display: none; }
-  .capture-title { max-width: 65px; }
 }
