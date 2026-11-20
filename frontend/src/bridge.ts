@@ -120,6 +120,7 @@ type Backend = {
   DeleteRecords(paths: string[]): Promise<void>;
   DeleteSessionLogs(path: string, fullOnly: boolean): Promise<void>;
   ExportLogs(paths: string[], fullSessions: string[]): Promise<string>;
+  ExportSession(path: string): Promise<string>;
   OpenFolder(path: string): Promise<void>;
 };
 declare global {

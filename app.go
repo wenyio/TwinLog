@@ -232,7 +232,35 @@ func confirmRecordDeletion(count int, ask func(wruntime.MessageDialogOptions) (s
 	return remove()
 }
 func (a *App) ExportLogs(paths, fullSessions []string) (string, error) {
-	name, e := capture.ExportFilename(paths, time.Now())
+	return a.exportLogs(paths, fullSessions, false)
+}
+func (a *App) ExportSession(path string) (string, error) {
+	state := a.manager.State()
+	if state.Connected && strings.EqualFold(filepath.Clean(state.SessionDir), filepath.Clean(path)) {
+		return "", fmt.Errorf("导出连接前请先断开设备连接")
+	}
+	sessions, err := a.manager.ListSessions(a.GetConfig().OutputDir)
+	if err != nil {
+		return "", err
+	}
+	for _, s := range sessions {
+		if s.Path != path {
+			continue
+		}
+		paths := make([]string, 0, len(s.Records))
+		for _, r := range s.Records {
+			paths = append(paths, r.Path)
+		}
+		var full []string
+		if s.Full != nil {
+			full = []string{s.Path}
+		}
+		return a.exportLogs(paths, full, true)
+	}
+	return "", fmt.Errorf("连接不在当前保存目录内")
+}
+func (a *App) exportLogs(paths, fullSessions []string, connectionScope bool) (string, error) {
+	name, e := capture.ExportSelectionFilename(paths, fullSessions, time.Now(), connectionScope)
 	if e != nil {
 		return "", e
 	}
@@ -243,7 +271,7 @@ func (a *App) ExportLogs(paths, fullSessions []string) (string, error) {
 	if !strings.EqualFold(filepath.Ext(path), ".zip") {
 		path += ".zip"
 	}
-	if e = a.manager.ExportSelection(a.GetConfig().OutputDir, paths, fullSessions, path); e != nil {
+	if e = a.manager.ExportSelection(a.GetConfig().OutputDir, paths, fullSessions, path, connectionScope); e != nil {
 		return "", e
 	}
 	return path, nil

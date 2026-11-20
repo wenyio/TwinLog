@@ -317,11 +317,63 @@ func ExportFilename(paths []string, now time.Time) (string, error) {
 	return name + resultSuffix(r.Result) + ".zip", nil
 }
 
-func (m *Manager) Export(paths []string, destination string, includeFull bool) error {
-	return m.exportLogs(paths, nil, destination, includeFull)
+// ExportSelectionFilename uses the same scope as the archive layout.
+func ExportSelectionFilename(paths, fullSessions []string, now time.Time, connectionScope ...bool) (string, error) {
+	records := map[string]bool{}
+	sessions := map[string]bool{}
+	for _, path := range paths {
+		p, err := resolvedExportPath(path)
+		if err != nil {
+			return "", err
+		}
+		records[p] = true
+		sessions[filepath.Dir(p)] = true
+	}
+	for _, path := range fullSessions {
+		p, err := resolvedExportPath(path)
+		if err != nil {
+			return "", err
+		}
+		sessions[p] = true
+	}
+	if len(sessions) == 1 {
+		if len(records) == 1 && !(len(connectionScope) > 0 && connectionScope[0]) {
+			for p := range records {
+				return ExportFilename([]string{p}, now)
+			}
+		}
+		for s := range sessions {
+			return exportSessionName(s) + ".zip", nil
+		}
+	}
+	return ExportFilename(nil, now)
 }
 
-func (m *Manager) ExportSelection(root string, paths, fullSessions []string, destination string) error {
+func resolvedExportPath(path string) (string, error) {
+	p, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(p)
+}
+
+func exportSessionName(path string) string {
+	if meta, ok := readSessionMetadata(path); ok && strings.TrimSpace(meta.Title) != "" {
+		name := safeName(meta.Title)
+		base, _, _ := strings.Cut(name, ".")
+		if !filepath.IsLocal(strings.TrimRight(base, " ")) {
+			name = "_" + name
+		}
+		return name
+	}
+	return filepath.Base(path)
+}
+
+func (m *Manager) Export(paths []string, destination string, includeFull bool) error {
+	return m.exportLogs(paths, nil, destination, includeFull, false)
+}
+
+func (m *Manager) ExportSelection(root string, paths, fullSessions []string, destination string, connectionScope ...bool) error {
 	fullDirs := make([]string, 0, len(fullSessions))
 	for _, session := range fullSessions {
 		p, err := managedSession(root, session)
@@ -337,10 +389,10 @@ func (m *Manager) ExportSelection(root string, paths, fullSessions []string, des
 		}
 		fullDirs = append(fullDirs, dir)
 	}
-	return m.exportLogs(paths, fullDirs, destination, false)
+	return m.exportLogs(paths, fullDirs, destination, false, len(connectionScope) > 0 && connectionScope[0])
 }
 
-func (m *Manager) exportLogs(paths, fullDirs []string, destination string, includeFull bool) error {
+func (m *Manager) exportLogs(paths, fullDirs []string, destination string, includeFull, connectionScope bool) error {
 	if len(paths) == 0 && len(fullDirs) == 0 {
 		return fmt.Errorf("请选择需要导出的记录")
 	}
@@ -353,11 +405,7 @@ func (m *Manager) exportLogs(paths, fullDirs []string, destination string, inclu
 	sessions := map[string]bool{}
 	usedPrefixes := map[string]bool{}
 	for _, path := range paths {
-		p, e := filepath.Abs(path)
-		if e != nil {
-			return e
-		}
-		p, e = filepath.EvalSymlinks(p)
+		p, e := resolvedExportPath(path)
 		if e != nil {
 			return e
 		}
@@ -380,7 +428,7 @@ func (m *Manager) exportLogs(paths, fullDirs []string, destination string, inclu
 			}
 		}
 		name += resultSuffix(r.Result)
-		base := filepath.Join(filepath.Base(session), name)
+		base := filepath.Join(session, name)
 		prefix := base
 		for i := 1; usedPrefixes[strings.ToLower(prefix)]; i++ {
 			prefix = fmt.Sprintf("%s_%d", base, i)
@@ -388,6 +436,13 @@ func (m *Manager) exportLogs(paths, fullDirs []string, destination string, inclu
 		usedPrefixes[strings.ToLower(prefix)] = true
 		dirs[p] = prefix
 		sessions[session] = true
+	}
+	// Count resolved, distinct records so repeated selections still export flat.
+	var singleRecord string
+	if len(dirs) == 1 {
+		for dir := range dirs {
+			singleRecord = dir
+		}
 	}
 	if includeFull {
 		for s := range sessions {
@@ -399,12 +454,46 @@ func (m *Manager) exportLogs(paths, fullDirs []string, destination string, inclu
 		}
 	}
 	for _, dir := range fullDirs {
+		dir, err = resolvedExportPath(dir)
+		if err != nil {
+			return err
+		}
 		s := filepath.Dir(dir)
 		if state.Connected && (sameResolvedPath(state.SessionDir, s) || sameResolvedPath(s, state.SessionDir)) {
 			return fmt.Errorf("导出完整日志前请先断开此会话的设备连接")
 		}
-		dirs[dir] = filepath.Join(filepath.Base(s), "full")
+		dirs[dir] = filepath.Join(s, "full")
 		sessions[s] = true
+	}
+	// The ZIP replaces the outermost selected scope: record, connection, or
+	// collection of connections. Only cross-connection exports need that level.
+	flat := singleRecord != "" && len(sessions) == 1 && !connectionScope
+	sessionPrefixes := map[string]string{}
+	sessionPaths := make([]string, 0, len(sessions))
+	for s := range sessions {
+		sessionPaths = append(sessionPaths, s)
+	}
+	sort.Strings(sessionPaths)
+	usedSessions := map[string]bool{}
+	for _, s := range sessionPaths {
+		prefix := ""
+		if len(sessions) > 1 {
+			base := exportSessionName(s)
+			prefix = base
+			for i := 1; usedSessions[strings.ToLower(prefix)]; i++ {
+				prefix = fmt.Sprintf("%s_%d", base, i)
+			}
+			usedSessions[strings.ToLower(prefix)] = true
+		}
+		sessionPrefixes[s] = prefix
+	}
+	for dir, prefix := range dirs {
+		s := filepath.Dir(dir)
+		if flat && dir == singleRecord {
+			dirs[dir] = ""
+		} else {
+			dirs[dir] = filepath.Join(sessionPrefixes[s], filepath.Base(prefix))
+		}
 	}
 	for dir := range dirs {
 		rel, e := filepath.Rel(dir, dest)
@@ -468,9 +557,10 @@ func (m *Manager) exportLogs(paths, fullDirs []string, destination string, inclu
 	}
 	if err == nil {
 		for s := range sessions {
+			prefix := sessionPrefixes[s]
 			for _, name := range []string{"session.json", "events.jsonl"} {
 				if _, e := os.Stat(filepath.Join(s, name)); e == nil {
-					if err = add(filepath.Join(s, name), filepath.Join(filepath.Base(s), name)); err != nil {
+					if err = add(filepath.Join(s, name), filepath.Join(prefix, name)); err != nil {
 						break
 					}
 				}

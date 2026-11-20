@@ -783,6 +783,7 @@ try {
     sessions[1].records[0].filterGaps = true;
     sessions[1].records[1].interrupted = true;
     window.historyCalls = [];
+    window.connectionExports = [];
     window.fullReads = [];
     window.sessionCalls = [];
     const handlers = {};
@@ -829,6 +830,7 @@ try {
         return { mcu: { text: "", bytes: 0 }, android: { text: "完整 Android 日志 " + path, bytes: 30 } };
       },
       ExportLogs: async (...args) => { window.historyCalls.push(args); return "test/history.zip"; },
+      ExportSession: async (path) => { window.connectionExports.push(path); return "test/connection.zip"; },
       DeleteSessionLogs: async (path, fullOnly) => {
         window.historyCalls.push([path, fullOnly]);
         const idx = sessions.findIndex((s) => s.path === path);
@@ -925,6 +927,7 @@ try {
   await historyPage.evaluate(() => window.pulseHistoryState({ capturing: true }));
   await showMenu(activeSession.locator(".session-row"));
   await rowMenu.waitFor();
+  assert.ok(await action("导出整个连接").isDisabled());
   for (let i = 0; i < 3; i++) {
     await historyPage.evaluate((androidBytes) => window.pulseHistoryState({ capturing: true, androidBytes }), i * 100);
     await settleMenu();
@@ -993,6 +996,10 @@ try {
   await historyPage.getByRole("button", { name: /导出所选/ }).click();
   await historyPage.getByText("已导出：test/history.zip", { exact: true }).waitFor();
   assert.deepEqual(await historyPage.evaluate(() => window.historyCalls[2]), [["test/old/r2"], ["test/old"]]);
+  await showMenu(oldSession.locator(".session-row"));
+  await action("导出整个连接").click();
+  await historyPage.getByText("已导出：test/connection.zip", { exact: true }).waitFor();
+  assert.deepEqual(await historyPage.evaluate(() => window.connectionExports), ["test/old"]);
   // Archive one record without hiding its sibling or the connection's full log.
   const firstRecord = oldSession.locator('.record-row').filter({ hasText: '连接测试' }).first();
   await firstRecord.locator('.history-item').click();

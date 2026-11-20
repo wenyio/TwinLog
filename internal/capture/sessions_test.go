@@ -186,7 +186,7 @@ func TestSessionManagement(t *testing.T) {
 	for _, f := range z.File {
 		entries[f.Name] = true
 	}
-	if err = z.Close(); err != nil || !reflect.DeepEqual(entries, map[string]bool{"old/full/android.log": true, "old/session.json": true}) || len(z.File) != 2 {
+	if err = z.Close(); err != nil || !reflect.DeepEqual(entries, map[string]bool{"full/android.log": true, "session.json": true}) || len(z.File) != 2 {
 		t.Fatalf("full-only export: %v, %v", entries, err)
 	}
 	if err = m.ExportSelection(root, nil, []string{active}, dest); err == nil {

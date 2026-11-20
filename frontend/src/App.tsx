@@ -716,6 +716,11 @@ export default function App() {
           onRecord={(r) => run("打开记录", () => changeView(r))}
           onFull={openFull}
           onExport={exportRecords} onDeleteRecords={deleteRecords} onDeleteSession={deleteSession}
+          onExportSession={(path) => run("正在导出", async () => {
+            await flush();
+            const p = await api.ExportSession(path);
+            if (p) setNotice("已导出：" + p);
+          })}
           onRename={setSessionDialog}
           onRenameRecord={setRecordDialog} onArchive={archiveSession} onArchiveRecord={archiveRecord}
           onOpenFolder={(path) => run("打开目录", () => api.OpenFolder(path))} />

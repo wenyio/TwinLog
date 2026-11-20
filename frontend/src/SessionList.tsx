@@ -18,7 +18,7 @@ function Writing({ label }: { label: string }) {
   return <span className="session-writing" title={label} aria-label={label}><LoaderCircle size={13} /></span>;
 }
 
-export default function SessionList({ sessions, selected, batchMode, archived, viewPath, state, locked, onSelect, onRecord, onFull, onExport, onDeleteRecords, onDeleteSession, onOpenFolder, onRename, onRenameRecord, onArchive, onArchiveRecord }: {
+export default function SessionList({ sessions, selected, batchMode, archived, viewPath, state, locked, onSelect, onRecord, onFull, onExport, onExportSession, onDeleteRecords, onDeleteSession, onOpenFolder, onRename, onRenameRecord, onArchive, onArchiveRecord }: {
   sessions: Session[];
   selected: Set<string>;
   batchMode: boolean;
@@ -30,6 +30,7 @@ export default function SessionList({ sessions, selected, batchMode, archived, v
   onRecord: (record: RecordItem) => void;
   onFull: (session: Session) => void;
   onExport: (paths: string[], fullSessions?: string[]) => void;
+  onExportSession: (path: string) => void;
   onDeleteRecords: (paths: string[]) => void;
   onDeleteSession: (path: string, fullOnly: boolean) => void;
   onOpenFolder: (path: string) => void;
@@ -136,7 +137,9 @@ export default function SessionList({ sessions, selected, batchMode, archived, v
         const canArchiveConnection = s.managed && (!archived || !!s.archived);
         return <div key={s.path}>
           <div className="session-header">
-          <div className="session-row" {...context([openFolder(s.path), ...(s.managed ? [rename(s),
+          <div className="session-row" {...context([openFolder(s.path),
+            exportItem("导出整个连接", () => onExportSession(s.path), connected || state.capturing || (!count && !s.full)),
+            ...(s.managed ? [rename(s),
             ...(canArchiveConnection ? [{ label: archiveLabel, icon: s.archived ? <ArchiveRestore size={15} /> : <Archive size={15} />,
               run: () => onArchive(s, !s.archived), disabled: connected }] : []),
             remove("删除连接", () => onDeleteSession(s.path, false), connected)] : [])])}>

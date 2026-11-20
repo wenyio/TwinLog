@@ -67,7 +67,7 @@ func TestExportNamesUseCurrentTitlesWithoutMovingRecords(t *testing.T) {
 		t.Fatalf("unexpected number of ZIP entries: %d", len(z.File))
 	}
 	for i, dir := range []string{"20261117_100000_新_Title", "20261117_100000_新_title_1", "20261117_100000", "20261117_100000_新_Title_2"} {
-		p := "session/" + dir + "/"
+		p := dir + "/"
 		for _, name := range []string{"mcu.log", "android.log", "notes.txt"} {
 			f, err := z.Open(p + name)
 			if err != nil {
