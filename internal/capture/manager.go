@@ -79,6 +79,7 @@ func (l *logFile) close() error {
 }
 
 type Manager struct {
+	attachmentMu                             sync.Mutex
 	op                                       sync.Mutex
 	mu                                       sync.Mutex
 	emit                                     func(string, any)

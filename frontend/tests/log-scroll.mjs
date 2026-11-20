@@ -23,6 +23,7 @@ try {
       const handlers = {};
       const config = { outputDir: "test", adbPath: "adb", serialPort: "COM1", androidSerial: "test", package: "", baudRate: 115200, dataBits: 8, stopBits: 1, parity: "none", dtr: false, rts: false };
       window.go = { main: { App: {
+        ListAttachments: async () => [],
         GetConfig: async () => config,
         SaveConfig: async (next) => { Object.assign(config, next); window.savedPreviewLines = next.previewLines; },
         GetState: async () => ({ connected: false, capturing: false, sessionDir: "", activeRecord: null, config, error: "", mcuBytes: 0, androidBytes: 0 }),
@@ -218,6 +219,7 @@ try {
       })),
     }));
     window.go = { main: { App: {
+      ListAttachments: async () => [],
       GetConfig: async () => config,
       GetState: async () => ({ connected: false, capturing: false, sessionDir: '', config }),
       ListSessions: async () => sessions, ListPorts: async () => [], ListDevices: async () => [],

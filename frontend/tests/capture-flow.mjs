@@ -100,6 +100,7 @@ try {
     window.go = {
       main: {
         App: {
+          ListAttachments: async () => [],
           GetConfig: async () => config,
           SaveConfig: async (next) => {
             window.calls.configSaves.push(structuredClone(next));
@@ -232,7 +233,7 @@ try {
   await page.goto(url);
   const capture = page.getByRole("tabpanel", { name: "抓取", exact: true });
   const title = page.getByRole("textbox", { name: "抓取标题", exact: true });
-  const notes = page.getByPlaceholder("输入备注", { exact: true });
+  const notes = page.getByRole("textbox", { name: "备注", exact: true });
   const newCapture = capture.getByRole("button", { name: "新建抓取", exact: true });
   const savedTitle = () => page.locator('.saved-record-title strong');
   const renameRecord = async (text, fail = false) => {
@@ -794,6 +795,7 @@ try {
       ...state, activeRecord: record("test/live/capture", "采集中"), ...next,
     }));
     window.go = { main: { App: {
+      ListAttachments: async () => [],
       GetConfig: async () => config,
       GetState: async () => state,
       ListPorts: async () => [], ListDevices: async () => [],
@@ -1070,7 +1072,7 @@ try {
   await oldSession.getByRole('checkbox', { name: '选择 重连测试' }).check();
   // Archive retains viewed logs and notes; failures leave the list untouched.
   await oldSession.locator('.record-row .history-item').first().click();
-  const historyNotes = historyPage.getByPlaceholder('输入备注', { exact: true });
+  const historyNotes = historyPage.getByRole('textbox', { name: '备注', exact: true });
   await historyPage.evaluate(() => { window.failHistorySave = true; });
   await historyNotes.fill('归档前备注');
   await oldSession.locator('.session-row').hover();

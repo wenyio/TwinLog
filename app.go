@@ -16,17 +16,19 @@ import (
 )
 
 type App struct {
-	ctx           context.Context
-	manager       *capture.Manager
-	mu            sync.Mutex
-	config        capture.Config
-	settings      string
-	closing       bool
-	awaitingNotes bool
-	closeRequest  uint64
-	closeAllowed  bool
-	windowRestore *windowBounds
-	windowMu      sync.Mutex
+	attachmentTaskMu sync.Mutex
+	attachmentTask   *attachmentTask
+	ctx              context.Context
+	manager          *capture.Manager
+	mu               sync.Mutex
+	config           capture.Config
+	settings         string
+	closing          bool
+	awaitingNotes    bool
+	closeRequest     uint64
+	closeAllowed     bool
+	windowRestore    *windowBounds
+	windowMu         sync.Mutex
 }
 
 func NewApp() *App {
@@ -97,6 +99,9 @@ func (a *App) ConfirmClose(ok bool) {
 	a.mu.Unlock()
 	go func() {
 		exited := finishClose(func() (bool, error) {
+			if err := a.finishAttachmentImport(); err != nil {
+				return false, err
+			}
 			if !a.manager.State().Connected {
 				return true, nil
 			}
@@ -191,6 +196,10 @@ func (a *App) ReadFullLogs(session string) (capture.RecordLogs, error) {
 	return a.manager.ReadFullLogs(c.OutputDir, session, c.PreviewLines)
 }
 func (a *App) DeleteSessionLogs(path string, fullOnly bool) error {
+	if err := a.lockIdleAttachments(); err != nil {
+		return err
+	}
+	defer a.attachmentTaskMu.Unlock()
 	return a.manager.RemoveSessionLogs(a.GetConfig().OutputDir, path, fullOnly, func(s capture.Session) (bool, error) {
 		title := "删除连接"
 		message := fmt.Sprintf("确定删除连接 %s？\n本次连接的整个目录将移入回收站，包括 %d 条记录及备注、连接信息和目录内其他文件。", filepath.Base(s.Path), len(s.Records))
@@ -209,6 +218,10 @@ func (a *App) DeleteSessionLogs(path string, fullOnly bool) error {
 	})
 }
 func (a *App) DeleteRecords(paths []string) error {
+	if err := a.lockIdleAttachments(); err != nil {
+		return err
+	}
+	defer a.attachmentTaskMu.Unlock()
 	root := a.GetConfig().OutputDir
 	return confirmRecordDeletion(len(paths), func(opts wruntime.MessageDialogOptions) (string, error) {
 		return wruntime.MessageDialog(a.ctx, opts)
@@ -260,6 +273,10 @@ func (a *App) ExportSession(path string) (string, error) {
 	return "", fmt.Errorf("连接不在当前保存目录内")
 }
 func (a *App) exportLogs(paths, fullSessions []string, connectionScope bool) (string, error) {
+	if err := a.lockIdleAttachments(); err != nil {
+		return "", err
+	}
+	defer a.attachmentTaskMu.Unlock()
 	name, e := capture.ExportSelectionFilename(paths, fullSessions, time.Now(), connectionScope)
 	if e != nil {
 		return "", e

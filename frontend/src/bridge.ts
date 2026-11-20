@@ -30,6 +30,8 @@ export interface RecordItem {
   archived?: boolean;
   result?: RecordResult;
 }
+export interface Attachment { name: string; bytes: number; }
+export interface AttachmentProgress { path: string; name: string; copied: number; total: number; }
 export interface State {
   connected: boolean;
   capturing: boolean;
@@ -92,6 +94,14 @@ export const defaults: Config = {
   previewLines: 2000,
 };
 type Backend = {
+  ListAttachments(path: string): Promise<Attachment[]>;
+  ImportAttachmentFiles(path: string): Promise<Attachment[]>;
+  PasteAttachments(path: string): Promise<Attachment[]>;
+  ClipboardAttachmentKind(): Promise<string>;
+  CancelAttachmentImport(): Promise<void>;
+  RenameAttachment(path: string, name: string, base: string): Promise<void>;
+  RemoveAttachment(path: string, name: string): Promise<void>;
+  OpenAttachment(path: string, name: string, reveal: boolean): Promise<void>;
   SetCompactWindow(compact: boolean, width: number, height: number, pinned: boolean): Promise<void>;
   ConfirmClose(ok: boolean): Promise<void>;
   GetConfig(): Promise<Config>;

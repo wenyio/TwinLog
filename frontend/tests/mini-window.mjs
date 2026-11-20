@@ -45,6 +45,7 @@ try {
       Quit: () => emit("before-close"),
     };
     window.go = { main: { App: {
+      ListAttachments: async () => Array.from({ length: 12 }, (_, i) => ({ name: `现场截图_${i}.png`, bytes: 1024 })),
       SetCompactWindow: async (compact, w, h, pinned) => {
         if (compact) {
           test.original = { w: innerWidth, h: innerHeight, pinned, max: test.max };
@@ -79,7 +80,7 @@ try {
   await page.goto(url);
   await page.getByRole("tab", { name: "抓取", exact: true }).click();
   const title = page.getByRole("textbox", { name: "抓取标题", exact: true });
-  const notes = page.getByPlaceholder("输入备注", { exact: true });
+  const notes = page.getByRole("textbox", { name: "备注", exact: true });
   await title.fill("切换小窗测试"); await notes.fill("草稿备注");
   const layout = await page.evaluate(() => localStorage.getItem("twinlog.layout"));
   const panelWidth = await page.locator(".operations").evaluate((panel) => panel.getBoundingClientRect().width);
@@ -141,9 +142,59 @@ try {
   await page.setViewportSize({ width: 1080, height: 780 });
   await page.getByRole("button", { name: "切换小窗", exact: true }).click();
   await page.waitForFunction(() => innerWidth === 282);
+  await page.locator(".notifications .notification .icon").evaluateAll(buttons => buttons.forEach(button => button.click()));
+  // Saved Android records exercise the tallest fixed controls. Content tabs
+  // must fit both supported minimum sizes, with scrolling confined to content.
+  await page.getByRole("button", { name: "重命名", exact: true }).click();
+  const rename = page.getByRole("dialog", { name: "重命名记录", exact: true });
+  await rename.getByRole("textbox", { name: "记录标题", exact: true }).fill("较长的现场故障标题".repeat(8));
+  await rename.getByRole("button", { name: "保存", exact: true }).click();
+  await rename.waitFor({ state: "hidden" });
+  const notesTab = page.getByRole("tab", { name: "备注", exact: true });
+  const attachmentsTab = page.getByRole("tab", { name: /^附件 · 12/ });
+  const longNotes = "多行现场备注，内容仅在输入框内滚动。\n".repeat(100);
+  await notes.fill(longNotes);
+  const assertContentFits = async () => {
+    const bounds = await page.evaluate(() => {
+      const pane = document.querySelector("#operations-panel-capture"), content = document.querySelector(".attachment-container");
+      const rect = content.getBoundingClientRect();
+      return { overflow: pane.scrollHeight - pane.clientHeight, top: rect.top, bottom: rect.bottom, height: rect.height, viewport: innerHeight, horizontal: document.documentElement.scrollWidth - innerWidth };
+    });
+    assert.ok(bounds.overflow <= 1 && bounds.bottom <= bounds.viewport && bounds.height >= 80 && bounds.horizontal === 0, JSON.stringify(bounds));
+  };
+  for (const mode of ["mini", "desktop"]) {
+    if (mode === "desktop") {
+      await page.getByRole("button", { name: "展开主窗口", exact: true }).click();
+      await page.waitForFunction(() => !document.querySelector(".mini-window"));
+      await page.setViewportSize({ width: 1080, height: 640 });
+    } else await page.setViewportSize({ width: 282, height: 560 });
+    await notesTab.click(); await assertContentFits();
+    assert.equal(await page.locator(".attachments-card").evaluate(el => getComputedStyle(el).borderTopWidth), "0px", "no divider above notes tabs");
+    assert.ok((await notes.boundingBox()).height >= 60);
+    assert.ok(await notes.evaluate(el => el.scrollHeight > el.clientHeight));
+    assert.equal(await notes.evaluate(el => getComputedStyle(el).resize), "none");
+    const controls = await page.locator(".record-result").boundingBox();
+    await attachmentsTab.click(); await assertContentFits();
+    assert.equal(await notes.isVisible(), false);
+    assert.deepEqual(await page.locator(".record-result").boundingBox(), controls, "tabs do not move result controls");
+    const list = page.locator(".record-attachments-panel");
+    assert.ok(await list.evaluate(el => el.scrollHeight > el.clientHeight));
+    await list.evaluate(el => { el.scrollTop = 80; });
+    const scroll = await list.evaluate(el => el.scrollTop);
+    await notesTab.click(); assert.equal(await notes.inputValue(), longNotes);
+    await notesTab.press("ArrowRight");
+    assert.equal(await attachmentsTab.getAttribute("aria-selected"), "true");
+    assert.equal(await list.evaluate(el => el.scrollTop), scroll, "attachment scroll survives tab switches");
+    await list.evaluate(el => { el.scrollTop = 0; });
+    await page.getByRole("button", { name: "添加附件", exact: true }).focus();
+    await page.screenshot({ path: `test-results/${mode}-attachment-tabs.png` });
+    await notesTab.click();
+    await page.screenshot({ path: `test-results/${mode}-notes-tab.png` });
+  }
+  await notes.fill("保存失败应保留");
   await page.getByRole("button", { name: "关闭", exact: true }).click();
   await page.waitForFunction(() => window.miniTest.closeAck === true);
   assert.equal(await page.evaluate(() => window.miniTest.records[0].notes), "保存失败应保留");
   assert.deepEqual(errors, []);
-  console.log("PASS: panel-matched 308/282px entry width overrides old width, fixed height with flexible notes, result persistence, restore, resize, failed-save switch blocking and close flush");
+  console.log("PASS: compact entry/restore/resize and close flush; minimum desktop/mini sizes with long title, long notes and 12 attachments; no outer scrolling, stable result controls, tab keyboard navigation, retained notes and attachment scroll");
 } finally { await browser?.close(); server.kill(); }

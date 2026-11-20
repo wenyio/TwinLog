@@ -36,6 +36,7 @@ try {
         if (scenario === name + "-error") throw Error("模拟" + name + "失败");
       };
       window.go = { main: { App: {
+        ListAttachments: async () => [],
         GetConfig: async () => { await wait("config"); return config; },
         GetState: async () => ({ connected: false, capturing: false, sessionDir: "", activeRecord: null, config, error: "", mcuBytes: 0, androidBytes: 0 }),
         ListPorts: async () => { await wait("ports"); return [{ name: "COM7", description: "测试串口" }]; },
@@ -99,6 +100,7 @@ try {
     const state = { connected: false, capturing: false, sessionDir: "", activeRecord: null, config, error: "", mcuBytes: 0, androidBytes: 0 };
     window.emitConnected = () => handlers.state({ ...state, connected: true });
     window.go = { main: { App: {
+      ListAttachments: async () => [],
       GetConfig: async () => config,
       GetState: async () => state,
       ListPorts: async () => [{ name: "COM7", description: "测试串口" }],

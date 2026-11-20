@@ -103,6 +103,10 @@ func (m *Manager) DeleteRecords(root string, paths []string) error {
 }
 
 func (m *Manager) deleteRecords(root string, paths []string, remove func([]string) error) error {
+	if err := m.lockAttachments(); err != nil {
+		return err
+	}
+	defer m.attachmentMu.Unlock()
 	if len(paths) == 0 {
 		return fmt.Errorf("请选择需要删除的记录")
 	}

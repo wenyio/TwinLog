@@ -1,11 +1,12 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import LogSplit from "./LogSplit";
-import WindowFrame, { WindowResizeGrip } from "./WindowFrame";
+import WindowFrame from "./WindowFrame";
 import Notification from "./Notification";
 import FilterNotification from "./FilterNotification";
 import LogPane, { emptyPreview, trimPreview } from "./LogPane";
 import SessionList, { recordTitle as displayTitle } from "./SessionList";
 import SessionDialog from "./SessionDialog";
+import Attachments from "./Attachments";
 import BaudRateDialog, { baudRatePresets, customBaudRates, validBaudRate } from "./BaudRateDialog";
 import { version } from "../package.json";
 import {
@@ -1112,13 +1113,8 @@ export default function App() {
               <span aria-hidden="true">○</span>待判定
             </button>
           </section>}
-          <section className="notes-card">
-            <header>
-              <FileText size={16} />
-              <strong>备注</strong>
-
-              <div className="grow" />
-              {(view || state.capturing) && (
+          </>}
+          <div className="attachment-container" hidden={!!fullView}><Attachments record={fullView ? null : view} enabled={!fullView && operationsTab === "capture" && (layout.right || mini)} blocked={locked || !!sessionDialog || !!recordDialog || baudRateDialog} mini={mini} notesStatus={(view || state.capturing) && (
                 <small className={saveStatus === "saved" ? "save-ok" : "save-pending"}>
                   {saveStatus === "saved" ? (
                     <>
@@ -1129,18 +1125,18 @@ export default function App() {
                     saveStatus === "failed" ? "未保存" : "保存中…"
                   )}
                 </small>
-              )}
-            </header>
+              )}>
+          <section className="notes-card">
             <textarea
               disabled={locked}
               value={notes}
-              placeholder="输入备注"
+              aria-label="备注"
+              placeholder="输入备注，可粘贴图片或文件作为附件"
               onChange={(e) => updateField("notes", e.target.value)}
               onBlur={() => flush().catch((e) => setError(String(e)))}
             />
-            <WindowResizeGrip />
           </section>
-          </>}
+          </Attachments></div>
         </div>
         <div
           className="operations-body"

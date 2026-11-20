@@ -1,6 +1,6 @@
 {
   "name": "twinlog",
-  "version": "1.3.0",
+  "version": "2.0.0",
   "license": "MIT",
   "private": true,
   "type": "module",
@@ -11,7 +11,8 @@
     "test:scroll": "node tests/log-scroll.mjs",
     "test:capture": "node tests/capture-flow.mjs",
     "test:startup": "node tests/startup.mjs",
-    "test:window": "node tests/mini-window.mjs"
+    "test:window": "node tests/mini-window.mjs",
+    "test:attachments": "node tests/attachments.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",

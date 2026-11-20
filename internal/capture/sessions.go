@@ -241,6 +241,10 @@ func (m *Manager) RemoveSessionLogs(root, path string, fullOnly bool, confirm fu
 }
 
 func (m *Manager) removeSessionLogs(root, path string, fullOnly bool, confirm func(Session) (bool, error), remove func([]string) error) error {
+	if err := m.lockAttachments(); err != nil {
+		return err
+	}
+	defer m.attachmentMu.Unlock()
 	m.op.Lock()
 	defer m.op.Unlock()
 	p, err := managedSession(root, path)

@@ -393,6 +393,10 @@ func (m *Manager) ExportSelection(root string, paths, fullSessions []string, des
 }
 
 func (m *Manager) exportLogs(paths, fullDirs []string, destination string, includeFull, connectionScope bool) error {
+	if err := m.lockAttachments(); err != nil {
+		return err
+	}
+	defer m.attachmentMu.Unlock()
 	if len(paths) == 0 && len(fullDirs) == 0 {
 		return fmt.Errorf("请选择需要导出的记录")
 	}

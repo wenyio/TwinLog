@@ -113,9 +113,8 @@ label {
 .mini-status span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mini-status span:last-child { flex: none; }
 .mini-window .operations-body { padding: 12px; gap: 12px; }
-.mini-window .operations-body[role="tabpanel"] .notes-card { min-height: 100px; position: relative; }
-.mini-window .notes-card header { margin-bottom: 6px; }
-.mini-window .notes-card textarea { min-height: 72px; resize: none; padding-bottom: 16px; }
+.mini-window #operations-panel-capture { gap: 6px; }
+.mini-window .notes-card textarea { padding-bottom: 16px; }
 .mini-window .title-input { height: 38px; min-height: 38px; flex-basis: 38px; padding: 7px 10px; }
 .mini-window .capture-heading { gap: 5px; }
 .mini-window .capture-heading-actions { gap: 8px; }
@@ -1201,11 +1200,57 @@ pre {
   flex: 1;
   display: flex;
   flex-direction: column;
-  min-height: 190px;
+  min-height: 0;
+  height: 100%;
 }
 .operations-body[role="tabpanel"] .notes-card textarea {
-  flex: 1;
+  flex: 1 1 0;
+  min-height: 0;
+  resize: none;
+  overflow-y: auto;
 }
+.attachments-card { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; position: relative; }
+.attachments-card > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.attachments-card > header { flex: none; min-height: 36px; gap: 6px; margin-bottom: 6px; }
+.record-content-tabs { display: flex; align-self: stretch; gap: 12px; min-width: 0; flex: none; }
+.record-content-tabs > button { position: relative; padding: 0; border-radius: 0; font-size: 12px; color: var(--text-secondary); gap: 4px; }
+.record-content-tabs > button[aria-selected="true"] { color: var(--text); font-weight: 600; }
+.record-content-tabs > button[aria-selected="true"]::after { content: ""; position: absolute; height: 2px; background: var(--text); bottom: 0; left: 0; right: 0; }
+.attachment-error-dot { width: 5px; height: 5px; background: #a13e32; border-radius: 50%; }
+.record-notes-panel, .record-attachments-panel { flex: 1 1 0; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+.record-attachments-panel { overflow-y: auto; }
+.attachment-feedback { flex: 1; min-width: 0; display: flex; justify-content: flex-end; align-items: center; gap: 3px; font-size: 11px; color: var(--text-secondary); white-space: nowrap; }
+.attachment-feedback > span { overflow: hidden; text-overflow: ellipsis; }
+.attachment-feedback > svg { flex: none; }
+.attachment-error { margin-top: 5px; min-width: 0; color: #a13e32; font-size: 11px; }
+.attachment-error-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.attachment-error-row > svg, .attachment-error-row > button { flex: none; }
+.attachment-error-row > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attachment-error-row .text-button { font-size: 11px; padding: 0 2px; }
+.attachment-error-details { margin-top: 4px; max-height: 100px; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.attachment-hint { display: block; color: var(--text-muted); font-size: 11px; margin-top: 5px; }
+.attachment-list { list-style: none; margin: 0; padding: 0; }
+.attachment-list > li { position: relative; display: flex; align-items: center; gap: 7px; padding: 7px 0; border-top: 1px solid var(--divider); min-width: 0; }
+.attachment-list > li > svg { color: var(--text-muted); flex: none; }
+.attachment-file { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; height: auto; padding: 0; text-align: left; }
+.attachment-filename { display: flex; width: 100%; min-width: 0; white-space: nowrap; }
+.attachment-basename { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.attachment-extension { flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; }
+.attachment-remove { position: absolute; right: 0; top: 50%; transform: translateY(-50%); background: var(--surface); opacity: 0; pointer-events: none; }
+.attachment-list > li:hover .attachment-remove, .attachment-list > li:focus-within .attachment-remove { opacity: 1; pointer-events: auto; }
+@media (hover: none) { .attachment-list .attachment-remove { opacity: 1; pointer-events: auto; } }
+.attachment-file small { color: var(--text-muted); font-size: 10px; font-weight: 400; }
+.attachment-add-popover { min-width: 210px; }
+.attachment-add-popover small { margin-left: auto; padding-left: 12px; color: var(--text-muted); font-size: 11px; }
+.attachment-progress { flex: none; display: flex; align-items: center; gap: 5px; margin-top: 5px; font-size: 11px; color: var(--text-secondary); }
+.attachment-progress > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attachment-name-field { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.attachment-name-field input { min-width: 0; flex: 1; }
+.attachment-name-field span { max-width: 70px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attachment-dialog { max-width: calc(100vw - 24px); box-sizing: border-box; }
+.attachment-dialog form { min-width: 0; }
+.operations-body > .attachment-container { flex: 1 1 0; min-width: 0; min-height: 80px; display: flex; }
+#operations-panel-capture { overflow: hidden; }
 .operations .connection-badge {
   border: none;
   padding: 0;
